@@ -1,0 +1,1128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workout.md — Prototype</title>
+<style>
+  :root{
+    --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:20px; --s6:24px; --s7:32px; --s8:40px;
+    --r-sm:14px; --r-md:20px; --r-lg:26px; --r-pill:999px;
+
+    --bg-app-1:#0c0c16; --bg-app-2:#15151f;
+    --glass-fill: rgba(255,255,255,0.08);
+    --glass-fill-2: rgba(255,255,255,0.13);
+    --glass-border: rgba(255,255,255,0.16);
+    --glass-border-bright: rgba(255,255,255,0.34);
+
+    --accent:#0a84ff;
+    --accent-2:#5e5ce6;
+    --accent-tint: rgba(10,132,255,0.16);
+    --accent-tint-border: rgba(94,92,230,0.45);
+    --green:#30d158;
+
+    --text-1: rgba(255,255,255,0.96);
+    --text-2: rgba(255,255,255,0.62);
+    --text-3: rgba(255,255,255,0.40);
+    --text-4: rgba(255,255,255,0.24);
+
+    --ease: cubic-bezier(0.4,0,0.2,1);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  }
+
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; padding:0; height:100%; }
+  body{
+    min-height:100vh;
+    display:flex; align-items:center; justify-content:center;
+    background:
+      radial-gradient(circle at 18% 10%, rgba(60,70,120,0.35), transparent 45%),
+      radial-gradient(circle at 85% 85%, rgba(40,30,80,0.35), transparent 50%),
+      linear-gradient(160deg, #1b1c24 0%, #0a0a10 55%, #050507 100%);
+    color: var(--text-1);
+    -webkit-font-smoothing: antialiased;
+    padding: 40px 20px;
+  }
+  button, input, textarea, select{ font: inherit; color: inherit; }
+  button{ background:none; border:none; cursor:pointer; }
+  textarea{ resize:none; }
+
+  /* ---------- Phone frame ---------- */
+  .phone-shell{
+    position:relative;
+    width:390px; height:844px;
+    border-radius:55px;
+    padding:14px;
+    background: linear-gradient(160deg,#4b4b52,#1c1c1f 35%,#000 100%);
+    box-shadow:
+      0 50px 100px -30px rgba(0,0,0,0.75),
+      0 0 0 1px rgba(255,255,255,0.06),
+      inset 0 0 0 2px rgba(255,255,255,0.04);
+    flex: none;
+  }
+  .phone-screen{
+    position:relative;
+    width:100%; height:100%;
+    border-radius:42px;
+    overflow:hidden;
+    background: var(--bg-app-1);
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,0.6);
+  }
+  .dynamic-island{
+    position:absolute; top:12px; left:50%; transform:translateX(-50%);
+    width:118px; height:34px; background:#000; border-radius:20px; z-index:80;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05);
+  }
+  .home-indicator{
+    position:absolute; bottom:8px; left:50%; transform:translateX(-50%);
+    width:134px; height:5px; border-radius:3px;
+    background:rgba(255,255,255,0.5); z-index:80;
+  }
+
+  /* ---------- App shell ---------- */
+  .app{ position:absolute; inset:0; display:flex; flex-direction:column; }
+
+  .bg-orb{ position:absolute; border-radius:50%; filter:blur(60px); pointer-events:none; z-index:0; }
+  .bg-orb.o1{ width:260px; height:260px; top:-60px; right:-80px; background:rgba(10,132,255,0.28); }
+  .bg-orb.o2{ width:220px; height:220px; bottom:120px; left:-90px; background:rgba(94,92,230,0.24); }
+  .bg-orb.o3{ width:200px; height:200px; bottom:-60px; right:-60px; background:rgba(48,209,88,0.10); }
+
+  .screens{ position:relative; flex:1; min-height:0; z-index:1; }
+  .screen{
+    position:absolute; inset:0;
+    overflow-y:auto; -webkit-overflow-scrolling:touch;
+    opacity:0; transform:translateY(6px) scale(0.995);
+    pointer-events:none;
+    transition: opacity .28s var(--ease), transform .28s var(--ease);
+  }
+  .screen.active{ opacity:1; transform:none; pointer-events:auto; }
+
+  .nav-header{
+    position:sticky; top:0; z-index:20;
+    padding: 54px var(--s5) var(--s4);
+    background: rgba(14,14,20,0.55);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    backdrop-filter: blur(20px) saturate(180%);
+    border-bottom: 1px solid rgba(255,255,255,0.07);
+  }
+  .nav-title{ font-size:32px; font-weight:750; letter-spacing:-0.02em; line-height:1.1; }
+  .nav-subtitle{ margin-top:2px; font-size:14px; color:var(--text-2); font-weight:500; }
+
+  .scroll-content{ padding: var(--s4) var(--s5) 130px; }
+
+  /* ---------- Glass base ---------- */
+  .glass{
+    background: var(--glass-fill);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid var(--glass-border);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.20), 0 10px 24px rgba(0,0,0,0.30);
+  }
+
+  /* ---------- Tab bar ---------- */
+  .tab-bar{
+    position:absolute; left:18px; right:18px; bottom:20px; z-index:70;
+    height:64px; border-radius:32px;
+    background: rgba(255,255,255,0.12);
+    -webkit-backdrop-filter: blur(26px) saturate(190%);
+    backdrop-filter: blur(26px) saturate(190%);
+    border:1px solid rgba(255,255,255,0.22);
+    box-shadow: 0 14px 34px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.32);
+    display:flex; align-items:stretch; padding:6px;
+  }
+  .tab-btn{
+    flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+    color: var(--text-3); border-radius:26px;
+    transition: color .2s var(--ease), transform .15s var(--ease);
+  }
+  .tab-btn:active{ transform:scale(0.94); }
+  .tab-btn svg{ width:23px; height:23px; }
+  .tab-btn .tab-label{ font-size:10.5px; font-weight:650; letter-spacing:0.01em; }
+  .tab-btn.active{ color: var(--accent); }
+  .tab-btn .icon-wrap{ display:flex; align-items:center; justify-content:center; width:32px; height:22px; border-radius:12px; transition: background .2s var(--ease); }
+  .tab-btn.active .icon-wrap{ background: rgba(10,132,255,0.16); }
+
+  /* ---------- Toast ---------- */
+  .toast{
+    position:absolute; left:50%; bottom:96px; transform:translate(-50%,10px);
+    z-index:90; padding:10px 18px; border-radius:var(--r-pill);
+    background: rgba(30,30,36,0.85);
+    -webkit-backdrop-filter: blur(18px) saturate(180%);
+    backdrop-filter: blur(18px) saturate(180%);
+    border:1px solid rgba(255,255,255,0.14);
+    font-size:13px; font-weight:600; color:var(--text-1);
+    opacity:0; pointer-events:none;
+    transition: opacity .25s var(--ease), transform .25s var(--ease);
+    white-space:nowrap; max-width:80%; text-overflow:ellipsis; overflow:hidden;
+  }
+  .toast.show{ opacity:1; transform:translate(-50%,0); }
+
+  /* =====================================================
+     TODAY SCREEN
+  ===================================================== */
+  .session-strip{
+    display:flex; align-items:center; justify-content:space-between;
+    margin-bottom: var(--s5);
+  }
+  .session-name{ font-size:15px; font-weight:650; color:var(--text-1); }
+  .session-name .dot{ color:var(--text-3); margin:0 6px; font-weight:400; }
+  .session-dur{ color:var(--text-2); font-weight:500; }
+
+  .progress-block{ margin-bottom: var(--s6); }
+  .progress-text{ font-size:13px; color:var(--text-2); font-weight:600; margin-bottom:8px; }
+  .progress-text b{ color:var(--text-1); font-weight:700; }
+  .progress-track{ height:6px; border-radius:3px; background:rgba(255,255,255,0.10); overflow:hidden; }
+  .progress-fill{ height:100%; border-radius:3px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .4s var(--ease); }
+
+  .exercise-card{
+    border-radius: var(--r-lg);
+    padding: 18px 18px 16px;
+    margin-bottom: 14px;
+    transition: opacity .3s var(--ease);
+    animation: cardIn .35s var(--ease);
+  }
+  @keyframes cardIn{ from{ opacity:0; transform:translateY(8px);} to{ opacity:1; transform:none; } }
+  .exercise-card.skipped{ opacity:0.5; }
+  .exercise-card.skipped .sets{ pointer-events:none; }
+
+  .ex-head{ display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:4px; }
+  .ex-name-wrap{ display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; }
+  .exercise-name{ font-size:18px; font-weight:700; letter-spacing:-0.01em; transition: color .2s; }
+  .exercise-card.skipped .exercise-name{ text-decoration: line-through; color:var(--text-3); }
+  .sub-badge{
+    display:none; font-size:11px; font-weight:700; color: var(--accent-2);
+    background: rgba(94,92,230,0.16); border:1px solid rgba(94,92,230,0.35);
+    padding:2px 8px; border-radius:var(--r-pill); text-transform:uppercase; letter-spacing:0.03em;
+  }
+  .sub-badge.show{ display:inline-block; }
+
+  .ex-target{ font-size:13px; color:var(--text-3); font-weight:600; margin-bottom:14px; }
+  .ex-target b{ color:var(--text-3); font-weight:700; }
+
+  .sets{ display:flex; flex-direction:column; gap:8px; margin-bottom:14px; }
+  .set-row{
+    display:flex; align-items:center; gap:12px;
+    min-height:44px; padding:0 12px;
+    border-radius:14px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.06);
+    cursor:pointer;
+    transition: background .2s var(--ease), transform .12s var(--ease), border-color .2s var(--ease);
+  }
+  .set-row:active{ transform:scale(0.97); }
+  .set-row.logged{ background: rgba(48,209,88,0.08); border-color: rgba(48,209,88,0.22); }
+  .set-row .set-label{ width:42px; flex:none; font-size:13px; font-weight:650; color:var(--text-3); }
+  .set-row.logged .set-label{ color:var(--text-2); }
+  .set-row .set-value{ flex:1; font-size:15px; font-weight:650; color:var(--text-3); font-variant-numeric:tabular-nums; transition: color .2s; }
+  .set-row.logged .set-value{ color:var(--text-1); }
+
+  .check-icon{ width:22px; height:22px; flex:none; }
+  .check-icon .fill{ opacity:0; fill:var(--green); transition:opacity .25s var(--ease); }
+  .check-icon .ring{ opacity:1; stroke:rgba(255,255,255,0.22); fill:none; stroke-width:1.6; transition:opacity .25s var(--ease); }
+  .check-icon .tick{ opacity:0; stroke:#04170a; stroke-width:2.2; fill:none; stroke-linecap:round; stroke-linejoin:round; transition:opacity .2s var(--ease); }
+  .set-row.logged .check-icon .fill{ opacity:1; }
+  .set-row.logged .check-icon .ring{ opacity:0; }
+  .set-row.logged .check-icon .tick{ opacity:1; }
+
+  .chip-row{ display:flex; flex-wrap:wrap; gap:8px; }
+  .chip{
+    display:inline-flex; align-items:center; justify-content:center;
+    height:32px; padding:0 14px; border-radius:var(--r-pill);
+    background: rgba(255,255,255,0.07);
+    border:1px solid rgba(255,255,255,0.13);
+    font-size:12.5px; font-weight:650; color:var(--text-2);
+    -webkit-backdrop-filter: blur(10px);
+    transition: background .18s var(--ease), color .18s var(--ease), transform .12s var(--ease), border-color .18s var(--ease);
+  }
+  .chip:active{ transform:scale(0.94); }
+  .chip.chip-flag{ width:32px; padding:0; }
+  .chip.chip-flag svg{ width:15px; height:15px; }
+  .chip.is-active{ background: rgba(10,132,255,0.20); border-color: rgba(10,132,255,0.5); color:#dbe9ff; }
+  .chip.chip-skip.is-active{ background: rgba(255,255,255,0.16); color:var(--text-1); }
+
+  .note-wrap{ max-height:0; overflow:hidden; opacity:0; transition: max-height .3s var(--ease), opacity .25s var(--ease), margin-top .3s var(--ease); }
+  .note-wrap.open{ max-height:100px; opacity:1; margin-top:12px; }
+  .note-area{
+    width:100%; min-height:68px; padding:10px 12px; border-radius:14px;
+    background: rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.12);
+    color:var(--text-1); font-size:13.5px; line-height:1.4;
+  }
+  .note-area::placeholder{ color:var(--text-3); }
+
+  .nudge-card{
+    display:none; margin-top:14px; padding:14px 14px 14px 14px; border-radius:18px;
+    background: linear-gradient(135deg, rgba(94,92,230,0.20), rgba(10,132,255,0.12));
+    border: 1px solid var(--accent-tint-border);
+    -webkit-backdrop-filter: blur(18px) saturate(180%);
+    backdrop-filter: blur(18px) saturate(180%);
+  }
+  .nudge-card.open{ display:flex; flex-direction:column; gap:10px; animation: nudgeIn .3s var(--ease); }
+  @keyframes nudgeIn{ from{ opacity:0; transform:translateY(-6px) scale(0.97);} to{ opacity:1; transform:none; } }
+  .nudge-top{ display:flex; align-items:center; gap:8px; }
+  .nudge-top svg{ width:16px; height:16px; color:#bcd4ff; flex:none; }
+  .nudge-label{ font-size:10.5px; font-weight:750; text-transform:uppercase; letter-spacing:0.06em; color:#bcd4ff; }
+  .nudge-text{ font-size:14.5px; font-weight:650; color:var(--text-1); line-height:1.35; }
+  .nudge-actions{ display:flex; gap:8px; }
+  .nudge-actions button{
+    flex:1; min-height:38px; border-radius:12px; font-size:13.5px; font-weight:700;
+    transition: transform .12s var(--ease), background .18s var(--ease);
+  }
+  .nudge-actions button:active{ transform:scale(0.95); }
+  .nudge-accept{ background: var(--accent); color:#fff; }
+  .nudge-ignore{ background: rgba(255,255,255,0.10); color:var(--text-2); border:1px solid rgba(255,255,255,0.14); }
+
+  /* =====================================================
+     PLAN SCREEN
+  ===================================================== */
+  .banner{
+    border-radius: var(--r-lg); padding:18px; margin-bottom:16px;
+  }
+  .banner-title{ font-size:15.5px; font-weight:700; line-height:1.4; margin-bottom:12px; color:var(--text-1); }
+  .btn-primary{
+    display:inline-flex; align-items:center; justify-content:center; width:100%;
+    min-height:46px; border-radius:16px; font-size:15px; font-weight:700;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color:#fff; box-shadow: 0 8px 18px rgba(10,132,255,0.35);
+    transition: transform .12s var(--ease), box-shadow .18s var(--ease);
+  }
+  .btn-primary:active{ transform:scale(0.97); box-shadow:0 4px 10px rgba(10,132,255,0.3); }
+
+  .next-cta{
+    border-radius: var(--r-lg); padding:22px; margin-bottom:16px; text-align:center;
+    cursor:pointer;
+    background: linear-gradient(160deg, rgba(94,92,230,0.22), rgba(10,132,255,0.10));
+    border: 1px solid rgba(120,140,255,0.35);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.25), 0 12px 28px rgba(30,40,120,0.35);
+    transition: transform .15s var(--ease);
+  }
+  .next-cta:active{ transform:scale(0.98); }
+  .next-cta .cta-icon{ width:34px; height:34px; margin:0 auto 10px; color:#cdd9ff; }
+  .next-cta .cta-title{ font-size:19px; font-weight:750; letter-spacing:-0.01em; margin-bottom:4px; }
+  .next-cta .cta-sub{ font-size:13px; color:var(--text-2); font-weight:500; }
+
+  .answer-panel{ max-height:0; overflow:hidden; opacity:0; transition: max-height .35s var(--ease), opacity .3s var(--ease), margin .3s var(--ease); }
+  .answer-panel.open{ max-height:220px; opacity:1; margin-bottom:16px; }
+  .answer-panel-inner{ border-radius:var(--r-lg); padding:16px; }
+  .answer-panel-inner .a-label{ font-size:11px; font-weight:750; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-3); margin-bottom:6px; }
+  .answer-panel-inner .a-title{ font-size:16px; font-weight:700; margin-bottom:4px; }
+  .answer-panel-inner .a-reason{ font-size:13px; color:var(--text-2); line-height:1.4; margin-bottom:12px; }
+
+  .section-label{ font-size:12.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-3); margin: 20px 4px 10px; }
+  .section-label:first-of-type{ margin-top:4px; }
+
+  .timeline{ border-radius: var(--r-lg); overflow:hidden; }
+  .timeline-row{
+    display:flex; align-items:center; gap:12px; padding:14px 16px;
+    border-bottom:1px solid rgba(255,255,255,0.07);
+    position:relative;
+  }
+  .timeline-row:last-child{ border-bottom:none; }
+  .timeline-row.current{ background: rgba(10,132,255,0.10); }
+  .timeline-row.current::before{
+    content:""; position:absolute; left:0; top:8px; bottom:8px; width:3px; border-radius:2px; background: var(--accent);
+  }
+  .timeline-row.missed{ opacity:0.48; }
+  .tl-day{ width:64px; flex:none; }
+  .tl-day-name{ font-size:13px; font-weight:750; color:var(--text-1); }
+  .tl-day-date{ font-size:11px; color:var(--text-3); font-weight:600; }
+  .tl-main{ flex:1; }
+  .tl-title{ font-size:14.5px; font-weight:650; color:var(--text-1); }
+  .tl-tag{ font-size:11.5px; color:var(--text-3); font-weight:600; margin-top:1px; }
+  .tl-status{ font-size:11.5px; font-weight:700; color:var(--text-3); padding:4px 10px; border-radius:var(--r-pill); background:rgba(255,255,255,0.06); }
+  .timeline-row.current .tl-status{ color:var(--accent); background:rgba(10,132,255,0.14); }
+
+  /* =====================================================
+     COACH SCREEN
+  ===================================================== */
+  .group{ border-radius: var(--r-lg); overflow:hidden; margin-bottom:16px; }
+  .group-row{
+    display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:14px 16px; min-height:44px;
+    border-bottom:1px solid rgba(255,255,255,0.07);
+  }
+  .group-row:last-child{ border-bottom:none; }
+  .group-row .g-label{ font-size:14.5px; font-weight:600; color:var(--text-1); }
+  .group-row .g-value{ font-size:14.5px; font-weight:600; color:var(--text-2); text-align:right; }
+  .g-row-plain{ padding:14px 16px; font-size:14.5px; font-weight:600; color:var(--text-1); border-bottom:1px solid rgba(255,255,255,0.07); }
+  .g-row-plain:last-child{ border-bottom:none; }
+  .g-row-plain .g-sub{ display:block; font-size:12.5px; font-weight:500; color:var(--text-3); margin-top:2px; }
+
+  .cycle-btn{
+    padding:6px 12px; border-radius:var(--r-pill); background:rgba(255,255,255,0.09); border:1px solid rgba(255,255,255,0.14);
+    font-size:13.5px; font-weight:700; color:var(--text-1); transition: transform .12s var(--ease), background .15s var(--ease);
+  }
+  .cycle-btn:active{ transform:scale(0.93); }
+
+  textarea.coach-instructions{
+    width:100%; min-height:112px; padding:14px; border-radius:var(--r-lg);
+    background: var(--glass-fill); border:1px solid var(--glass-border);
+    -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%);
+    color:var(--text-1); font-size:14px; line-height:1.5; margin-bottom:16px;
+  }
+
+  .chip-wrap{ display:flex; flex-wrap:wrap; gap:8px; padding:14px 16px; }
+  .pref-chip{
+    height:32px; padding:0 14px; border-radius:var(--r-pill); font-size:12.5px; font-weight:650;
+    background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.13); color:var(--text-2);
+    transition: background .15s var(--ease), color .15s var(--ease), transform .12s var(--ease);
+  }
+  .pref-chip:active{ transform:scale(0.93); }
+  .pref-chip.selected{ background: rgba(10,132,255,0.20); border-color:rgba(10,132,255,0.5); color:#dbe9ff; }
+  .pref-chip.removable{ display:inline-flex; align-items:center; gap:6px; background:rgba(255,255,255,0.07); color:var(--text-2); }
+  .pref-chip.removable .x{ font-size:14px; opacity:0.7; }
+  .pref-chip.fade-out{ opacity:0; transform:scale(0.8); }
+
+  .segmented{ display:flex; padding:4px; margin:14px 16px 16px; border-radius:14px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.10); }
+  .segmented button{ flex:1; padding:8px 0; border-radius:10px; font-size:13px; font-weight:650; color:var(--text-2); transition: background .2s var(--ease), color .2s var(--ease); }
+  .segmented button.active{ background: rgba(255,255,255,0.14); color:var(--text-1); box-shadow: 0 2px 6px rgba(0,0,0,0.25); }
+
+  .doctrine-wrap{ padding:14px 16px; display:flex; flex-direction:column; gap:8px; }
+  .file-chip{ display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:14px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.10); animation: cardIn .3s var(--ease); }
+  .file-chip svg{ width:18px; height:18px; color:var(--text-3); flex:none; }
+  .file-chip .fname{ font-size:13.5px; font-weight:600; color:var(--text-1); }
+  .add-file-btn{
+    display:flex; align-items:center; justify-content:center; gap:8px; min-height:44px; border-radius:14px;
+    border:1.5px dashed rgba(255,255,255,0.22); color:var(--text-2); font-size:13.5px; font-weight:650;
+    transition: background .15s var(--ease), transform .12s var(--ease);
+  }
+  .add-file-btn:active{ transform:scale(0.97); background:rgba(255,255,255,0.05); }
+
+  .footer-block{ text-align:center; padding: 8px 20px 20px; }
+  .footer-line{ font-size:12.5px; color:var(--text-3); font-weight:500; margin-bottom:12px; line-height:1.5; }
+  .btn-ghost{
+    display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:44px; padding:0 22px;
+    border-radius:16px; border:1px solid rgba(255,255,255,0.18); color:var(--text-1); font-size:14px; font-weight:700;
+    background: rgba(255,255,255,0.05);
+    transition: transform .12s var(--ease), background .15s var(--ease);
+  }
+  .btn-ghost:active{ transform:scale(0.96); background:rgba(255,255,255,0.10); }
+</style>
+</head>
+<body>
+
+<div class="phone-shell">
+  <div class="phone-screen">
+    <div class="dynamic-island"></div>
+
+    <div class="app">
+      <div class="bg-orb o1"></div>
+      <div class="bg-orb o2"></div>
+      <div class="bg-orb o3"></div>
+
+      <div class="screens">
+
+        <!-- ============ TODAY ============ -->
+        <section class="screen active" id="screen-today">
+          <header class="nav-header">
+            <div class="nav-title">Today</div>
+            <div class="nav-subtitle">Thursday, Jul 9</div>
+          </header>
+
+          <div class="scroll-content">
+            <div class="session-strip">
+              <div class="session-name">Upper Body A<span class="dot">·</span><span class="session-dur">~45 min</span></div>
+            </div>
+
+            <div class="progress-block">
+              <div class="progress-text"><b id="progress-count">2 of 13</b> sets logged</div>
+              <div class="progress-track"><div class="progress-fill" id="progress-fill" style="width:15%"></div></div>
+            </div>
+
+            <!-- Bench Press -->
+            <div class="exercise-card glass" data-alts="Incline Barbell Press|Dumbbell Bench Press|Machine Chest Press">
+              <div class="ex-head">
+                <div class="ex-name-wrap">
+                  <div class="exercise-name">Bench Press</div>
+                  <span class="sub-badge">Substituted</span>
+                </div>
+              </div>
+              <div class="ex-target">Target: <b>3 × 10 @ 135</b></div>
+
+              <div class="sets">
+                <div class="set-row logged" data-set="1" data-weight="135" data-reps="10">
+                  <span class="set-label">Set 1</span>
+                  <span class="set-value">135 × 10</span>
+                  <svg class="check-icon" viewBox="0 0 24 24"><circle class="fill" cx="12" cy="12" r="9.5"/><circle class="ring" cx="12" cy="12" r="9.5"/><path class="tick" d="M7.5 12.5l3 3 6-6.5"/></svg>
+                </div>
+                <div class="set-row logged" data-set="2" data-weight="135" data-reps="8">
+                  <span class="set-label">Set 2</span>
+                  <span class="set-value">135 × 8</span>
+                  <svg class="check-icon" viewBox="0 0 24 24"><circle class="fill" cx="12" cy="12" r="9.5"/><circle class="ring" cx="12" cy="12" r="9.5"/><path class="tick" d="M7.5 12.5l3 3 6-6.5"/></svg>
+                </div>
+                <div class="set-row" data-set="3" data-weight="135" data-reps="10">
+                  <span class="set-label">Set 3</span>
+                  <span class="set-value">135 × 10</span>
+                  <svg class="check-icon" viewBox="0 0 24 24"><circle class="fill" cx="12" cy="12" r="9.5"/><circle class="ring" cx="12" cy="12" r="9.5"/><path class="tick" d="M7.5 12.5l3 3 6-6.5"/></svg>
+                </div>
+              </div>
+
+              <div class="chip-row">
+                <button class="chip chip-skip" type="button">Skip</button>
+                <button class="chip chip-sub" type="button">Substitute</button>
+                <button class="chip chip-addset" type="button">+ Set</button>
+                <button class="chip chip-note" type="button">Note</button>
+                <button class="chip chip-flag" type="button" aria-label="Flag pain or fatigue">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4"/><path d="M6 4.5c2-1.2 4-1.2 6 0s4 1.2 6 0v8c-2 1.2-4 1.2-6 0s-4-1.2-6 0Z"/></svg>
+                </button>
+              </div>
+
+              <div class="note-wrap"><textarea class="note-area" placeholder="Add a note about form, pain, equipment…"></textarea></div>
+
+              <div class="nudge-card">
+                <div class="nudge-top">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v10"/><circle cx="12" cy="17.5" r="1.4" fill="currentColor" stroke="none"/><path d="M4.5 20h15L12 4 4.5 20Z"/></svg>
+                  <span class="nudge-label">Coach nudge</span>
+                </div>
+                <div class="nudge-text">Reduce Set 3 to 115 × 8?</div>
+                <div class="nudge-actions">
+                  <button class="nudge-ignore" type="button">Ignore</button>
+                  <button class="nudge-accept" type="button">Accept</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Incline DB Press -->
+            <div class="exercise-card glass" data-alts="Incline Machine Press|Low-Incline DB Press">
+              <div class="ex-head">
+                <div class="ex-name-wrap">
+                  <div class="exercise-name">Incline DB Press</div>
+                  <span class="sub-badge">Substituted</span>
+                </div>
+              </div>
+              <div class="ex-target">Target: <b>3 × 12 @ 50</b></div>
+
+              <div class="sets">
+                <div class="set-row" data-set="1" data-weight="50" data-reps="12">
+                  <span class="set-label">Set 1</span><span class="set-value">50 × 12</span>
+                  <svg class="check-icon" viewBox="0 0 24 24"><circle class="fill" cx="12" cy="12" r="9.5"/><circle class="ring" cx="12" cy="12" r="9.5"/><path class="tick" d="M7.5 12.5l3 3 6-6.5"/></svg>
+                </div>
+                <div class="set-row" data-set="2" data-weight="50" data-reps="12">
+                  <span class="set-label">Set 2</span><span class="set-value">50 × 12</span>
+                  <svg class="check-icon" viewBox="0 0 24 24"><circle class="fill" cx="12" cy="12" r="9.5"/><circle class="ring" cx="12" cy="12" r="9.5"/><path class="tick" d="M7.5 12.5l3 3 6-6.5"/></svg>
+                </div>
+                <div class="set-row" data-set="3" data-weight="50" data-reps="12">
+                  <span class="set-label">Set 3</span><span class="set-value">50 × 12</span>
+                  <svg class="check-icon" viewBox="0 0 24 24"><circle class="fill" cx="12" cy="12" r="9.5"/><circle class="ring" cx="12" cy="12" r="9.5"/><path class="tick" d="M7.5 12.5l3 3 6-6.5"/></svg>
+                </div>
+              </div>
+
+              <div class="chip-row">
+                <button class="chip chip-skip" type="button">Skip</button>
+                <button class="chip chip-sub" type="button">Substitute</button>
+                <button class="chip chip-addset" type="button">+ Set</button>
+                <button class="chip chip-note" type="button">Note</button>
+                <button class="chip chip-flag" type="button" aria-label="Flag pain or fatigue">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4"/><path d="M6 4.5c2-1.2 4-1.2 6 0s4 1.2 6 0v8c-2 1.2-4 1.2-6 0s-4-1.2-6 0Z"/></svg>
+                </button>
+              </div>
+
+              <div class="note-wrap"><textarea class="note-area" placeholder="Add a note about form, pain, equipment…"></textarea></div>
+
+              <div class="nudge-card">
+                <div class="nudge-top">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v10"/><circle cx="12" cy="17.5" r="1.4" fill="currentColor" stroke="none"/><path d="M4.5 20h15L12 4 4.5 20Z"/></svg>
+                  <span class="nudge-label">Coach nudge</span>
+                </div>
+                <div class="nudge-text">—</div>
+                <div class="nudge-actions">
+                  <button class="nudge-ignore" type="button">Ignore</button>
+                  <button class="nudge-accept" type="button">Accept</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Barbell Row -->
+            <div class="exercise-card glass" data-alts="Pendlay Row|Chest-Supported Row|Cable Row">
+              <div class="ex-head">
+                <div class="ex-name-wrap">
+                  <div class="exercise-name">Barbell Row</div>
+                  <span class="sub-badge">Substituted</span>
+                </div>
+              </div>
+              <div class="ex-target">Target: <b>4 × 8 @ 155</b></div>
+
+              <div class="sets">
+                <div class="set-row" data-set="1" data-weight="155" data-reps="8">
+                  <span class="set-label">Set 1</span><span class="set-value">155 × 8</span>
+                  <svg class="check-icon" viewBox="0 0 24 24"><circle class="fill" cx="12" cy="12" r="9.5"/><circle class="ring" cx="12" cy="12" r="9.5"/><path class="tick" d="M7.5 12.5l3 3 6-6.5"/></svg>
+                </div>
+                <div class="set-row" data-set="2" data-weight="155" data-reps="8">
+                  <span class="set-label">Set 2</span><span class="set-value">155 × 8</span>
+                  <svg class="check-icon" viewBox="0 0 24 24"><circle class="fill" cx="12" cy="12" r="9.5"/><circle class="ring" cx="12" cy="12" r="9.5"/><path class="tick" d="M7.5 12.5l3 3 6-6.5"/></svg>
+                </div>
+                <div class="set-row" data-set="3" data-weight="155" data-reps="8">
+                  <span class="set-label">Set 3</span><span class="set-value">155 × 8</span>
+                  <svg class="check-icon" viewBox="0 0 24 24"><circle class="fill" cx="12" cy="12" r="9.5"/><circle class="ring" cx="12" cy="12" r="9.5"/><path class="tick" d="M7.5 12.5l3 3 6-6.5"/></svg>
+                </div>
+                <div class="set-row" data-set="4" data-weight="155" data-reps="8">
+                  <span class="set-label">Set 4</span><span class="set-value">155 × 8</span>
+                  <svg class="check-icon" viewBox="0 0 24 24"><circle class="fill" cx="12" cy="12" r="9.5"/><circle class="ring" cx="12" cy="12" r="9.5"/><path class="tick" d="M7.5 12.5l3 3 6-6.5"/></svg>
+                </div>
+              </div>
+
+              <div class="chip-row">
+                <button class="chip chip-skip" type="button">Skip</button>
+                <button class="chip chip-sub" type="button">Substitute</button>
+                <button class="chip chip-addset" type="button">+ Set</button>
+                <button class="chip chip-note" type="button">Note</button>
+                <button class="chip chip-flag" type="button" aria-label="Flag pain or fatigue">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4"/><path d="M6 4.5c2-1.2 4-1.2 6 0s4 1.2 6 0v8c-2 1.2-4 1.2-6 0s-4-1.2-6 0Z"/></svg>
+                </button>
+              </div>
+
+              <div class="note-wrap"><textarea class="note-area" placeholder="Add a note about form, pain, equipment…"></textarea></div>
+
+              <div class="nudge-card">
+                <div class="nudge-top">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v10"/><circle cx="12" cy="17.5" r="1.4" fill="currentColor" stroke="none"/><path d="M4.5 20h15L12 4 4.5 20Z"/></svg>
+                  <span class="nudge-label">Coach nudge</span>
+                </div>
+                <div class="nudge-text">—</div>
+                <div class="nudge-actions">
+                  <button class="nudge-ignore" type="button">Ignore</button>
+                  <button class="nudge-accept" type="button">Accept</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Face Pull -->
+            <div class="exercise-card glass" data-alts="Band Pull-Apart|Rear Delt Fly">
+              <div class="ex-head">
+                <div class="ex-name-wrap">
+                  <div class="exercise-name">Face Pull</div>
+                  <span class="sub-badge">Substituted</span>
+                </div>
+              </div>
+              <div class="ex-target">Target: <b>3 × 15</b></div>
+
+              <div class="sets">
+                <div class="set-row" data-set="1" data-weight="" data-reps="15">
+                  <span class="set-label">Set 1</span><span class="set-value">15 reps</span>
+                  <svg class="check-icon" viewBox="0 0 24 24"><circle class="fill" cx="12" cy="12" r="9.5"/><circle class="ring" cx="12" cy="12" r="9.5"/><path class="tick" d="M7.5 12.5l3 3 6-6.5"/></svg>
+                </div>
+                <div class="set-row" data-set="2" data-weight="" data-reps="15">
+                  <span class="set-label">Set 2</span><span class="set-value">15 reps</span>
+                  <svg class="check-icon" viewBox="0 0 24 24"><circle class="fill" cx="12" cy="12" r="9.5"/><circle class="ring" cx="12" cy="12" r="9.5"/><path class="tick" d="M7.5 12.5l3 3 6-6.5"/></svg>
+                </div>
+                <div class="set-row" data-set="3" data-weight="" data-reps="15">
+                  <span class="set-label">Set 3</span><span class="set-value">15 reps</span>
+                  <svg class="check-icon" viewBox="0 0 24 24"><circle class="fill" cx="12" cy="12" r="9.5"/><circle class="ring" cx="12" cy="12" r="9.5"/><path class="tick" d="M7.5 12.5l3 3 6-6.5"/></svg>
+                </div>
+              </div>
+
+              <div class="chip-row">
+                <button class="chip chip-skip" type="button">Skip</button>
+                <button class="chip chip-sub" type="button">Substitute</button>
+                <button class="chip chip-addset" type="button">+ Set</button>
+                <button class="chip chip-note" type="button">Note</button>
+                <button class="chip chip-flag" type="button" aria-label="Flag pain or fatigue">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4"/><path d="M6 4.5c2-1.2 4-1.2 6 0s4 1.2 6 0v8c-2 1.2-4 1.2-6 0s-4-1.2-6 0Z"/></svg>
+                </button>
+              </div>
+
+              <div class="note-wrap"><textarea class="note-area" placeholder="Add a note about form, pain, equipment…"></textarea></div>
+
+              <div class="nudge-card">
+                <div class="nudge-top">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v10"/><circle cx="12" cy="17.5" r="1.4" fill="currentColor" stroke="none"/><path d="M4.5 20h15L12 4 4.5 20Z"/></svg>
+                  <span class="nudge-label">Coach nudge</span>
+                </div>
+                <div class="nudge-text">—</div>
+                <div class="nudge-actions">
+                  <button class="nudge-ignore" type="button">Ignore</button>
+                  <button class="nudge-accept" type="button">Accept</button>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- ============ PLAN ============ -->
+        <section class="screen" id="screen-plan">
+          <header class="nav-header">
+            <div class="nav-title">Plan</div>
+            <div class="nav-subtitle">Forward-looking, not a calendar</div>
+          </header>
+
+          <div class="scroll-content">
+            <div class="banner glass">
+              <div class="banner-title">Welcome back — you missed 2 sessions. Plan repaired from today. No catch-up needed.</div>
+              <button class="btn-primary" id="start-next-session" type="button">Start next session</button>
+            </div>
+
+            <div class="next-cta" id="next-cta">
+              <svg class="cta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3.2M12 17.8V21M3 12h3.2M17.8 12H21"/><path d="M12 8.6a3.4 3.4 0 1 0 0 6.8 3.4 3.4 0 0 0 0-6.8Z"/></svg>
+              <div class="cta-title">What should I do next?</div>
+              <div class="cta-sub">Tap for a plan-aware recommendation</div>
+            </div>
+
+            <div class="answer-panel" id="answer-panel">
+              <div class="answer-panel-inner glass">
+                <div class="a-label">Recommended</div>
+                <div class="a-title">Upper Body A · ~45 min</div>
+                <div class="a-reason">Full recovery since Monday, push muscles haven't been trained in 3 days, and the plan was repaired to start here after your gap.</div>
+                <button class="btn-primary" id="answer-start" type="button">Start this session</button>
+              </div>
+            </div>
+
+            <div class="section-label">Upcoming</div>
+            <div class="timeline glass">
+              <div class="timeline-row missed">
+                <div class="tl-day"><div class="tl-day-name">Mon</div><div class="tl-day-date">Jul 6</div></div>
+                <div class="tl-main"><div class="tl-title">Upper Body A</div><div class="tl-tag">Strength focus</div></div>
+                <div class="tl-status">Missed</div>
+              </div>
+              <div class="timeline-row missed">
+                <div class="tl-day"><div class="tl-day-name">Wed</div><div class="tl-day-date">Jul 8</div></div>
+                <div class="tl-main"><div class="tl-title">Lower A</div><div class="tl-tag">Strength focus</div></div>
+                <div class="tl-status">Missed</div>
+              </div>
+              <div class="timeline-row current">
+                <div class="tl-day"><div class="tl-day-name">Today</div><div class="tl-day-date">Jul 9</div></div>
+                <div class="tl-main"><div class="tl-title">Upper Body A</div><div class="tl-tag">Hypertrophy focus</div></div>
+                <div class="tl-status">Now</div>
+              </div>
+              <div class="timeline-row">
+                <div class="tl-day"><div class="tl-day-name">Fri</div><div class="tl-day-date">Jul 10</div></div>
+                <div class="tl-main"><div class="tl-title">Lower A</div><div class="tl-tag">Hypertrophy focus</div></div>
+                <div class="tl-status">Planned</div>
+              </div>
+              <div class="timeline-row">
+                <div class="tl-day"><div class="tl-day-name">Sun</div><div class="tl-day-date">Jul 12</div></div>
+                <div class="tl-main"><div class="tl-title">Upper Body B</div><div class="tl-tag">Hypertrophy focus</div></div>
+                <div class="tl-status">Planned</div>
+              </div>
+              <div class="timeline-row">
+                <div class="tl-day"><div class="tl-day-name">Tue</div><div class="tl-day-date">Jul 14</div></div>
+                <div class="tl-main"><div class="tl-title">Lower B</div><div class="tl-tag">Hypertrophy focus</div></div>
+                <div class="tl-status">Planned</div>
+              </div>
+              <div class="timeline-row">
+                <div class="tl-day"><div class="tl-day-name">Thu</div><div class="tl-day-date">Jul 16</div></div>
+                <div class="tl-main"><div class="tl-title">Upper Body A</div><div class="tl-tag">Hypertrophy focus</div></div>
+                <div class="tl-status">Planned</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ COACH ============ -->
+        <section class="screen" id="screen-coach">
+          <header class="nav-header">
+            <div class="nav-title">Coach</div>
+            <div class="nav-subtitle">Configuration, in plain text</div>
+          </header>
+
+          <div class="scroll-content">
+            <div class="section-label">Goals</div>
+            <div class="group glass">
+              <div class="g-row-plain">Primary: Hypertrophy<span class="g-sub">Secondary: keep strength</span></div>
+              <div class="g-row-plain">8-week emphasis<span class="g-sub">Week 3 of 8</span></div>
+            </div>
+
+            <div class="section-label">Coach instructions</div>
+            <textarea class="coach-instructions glass" id="coach-instructions">Keep sessions under 45 min. Bias hypertrophy for 8 weeks. If I miss a session, don't make me catch up. Prefer simple barbell movements. Be concise, not motivational.</textarea>
+
+            <div class="section-label">Preferences</div>
+            <div class="group glass">
+              <div class="group-row">
+                <span class="g-label">Session length</span>
+                <button class="cycle-btn" id="session-length-btn" type="button" data-options="30,45,60,75" data-index="1">45 min</button>
+              </div>
+              <div class="chip-wrap" id="equipment-wrap">
+                <button class="pref-chip selected" type="button">Barbell</button>
+                <button class="pref-chip selected" type="button">Dumbbell</button>
+                <button class="pref-chip" type="button">Cables</button>
+                <button class="pref-chip" type="button">Machines</button>
+                <button class="pref-chip selected" type="button">Bodyweight</button>
+              </div>
+              <div class="chip-wrap" id="disliked-wrap">
+                <button class="pref-chip removable" type="button">Romanian Deadlift <span class="x">×</span></button>
+                <button class="pref-chip removable" type="button">Burpees <span class="x">×</span></button>
+              </div>
+              <div class="segmented" id="comm-style">
+                <button class="active" data-val="Concise">Concise</button>
+                <button data-val="Balanced">Balanced</button>
+                <button data-val="Verbose">Verbose</button>
+              </div>
+            </div>
+
+            <div class="section-label">Uploaded training doctrine</div>
+            <div class="group glass">
+              <div class="doctrine-wrap" id="doctrine-wrap">
+                <div class="file-chip">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h8l4 4V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1Z"/><path d="M14 3.5V8h4"/></svg>
+                  <span class="fname">5-3-1 notes.md</span>
+                </div>
+                <div class="file-chip">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h8l4 4V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1Z"/><path d="M14 3.5V8h4"/></svg>
+                  <span class="fname">hypertrophy-principles.pdf</span>
+                </div>
+                <button class="add-file-btn" id="add-doctrine" type="button">+ Add training doc</button>
+              </div>
+            </div>
+
+            <div class="footer-block">
+              <div class="footer-line">Your data is plain Markdown. Export anytime.</div>
+              <button class="btn-ghost" id="export-md" type="button">Export .md</button>
+            </div>
+          </div>
+        </section>
+
+      </div>
+
+      <!-- ============ TAB BAR ============ -->
+      <nav class="tab-bar">
+        <button class="tab-btn active" data-target="screen-today" type="button">
+          <span class="icon-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2.5"/><path d="M9 3.5h6a1 1 0 0 1 1 1V6H8V4.5a1 1 0 0 1 1-1Z"/><path d="m8.5 13 2.2 2.2L15.5 11"/></svg>
+          </span>
+          <span class="tab-label">Today</span>
+        </button>
+        <button class="tab-btn" data-target="screen-plan" type="button">
+          <span class="icon-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5.5" width="16" height="15" rx="2.5"/><path d="M4 10h16"/><path d="M8 3.5v3M16 3.5v3"/></svg>
+          </span>
+          <span class="tab-label">Plan</span>
+        </button>
+        <button class="tab-btn" data-target="screen-coach" type="button">
+          <span class="icon-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6h14M5 12h14M5 18h14"/><circle cx="9" cy="6" r="1.8" fill="currentColor" stroke="none"/><circle cx="16" cy="12" r="1.8" fill="currentColor" stroke="none"/><circle cx="10" cy="18" r="1.8" fill="currentColor" stroke="none"/></svg>
+          </span>
+          <span class="tab-label">Coach</span>
+        </button>
+      </nav>
+
+      <div class="toast" id="toast"></div>
+    </div>
+
+    <div class="home-indicator"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---------- Toast ----------
+  var toastEl = document.getElementById('toast');
+  var toastTimer = null;
+  function showToast(msg){
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function(){ toastEl.classList.remove('show'); }, 1800);
+  }
+
+  // ---------- Tab switching ----------
+  var tabBtns = document.querySelectorAll('.tab-btn');
+  var screens = document.querySelectorAll('.screen');
+  function switchScreen(targetId){
+    screens.forEach(function(s){ s.classList.toggle('active', s.id === targetId); });
+    tabBtns.forEach(function(b){ b.classList.toggle('active', b.dataset.target === targetId); });
+  }
+  tabBtns.forEach(function(btn){
+    btn.addEventListener('click', function(){ switchScreen(btn.dataset.target); });
+  });
+
+  // ---------- Today: progress ----------
+  var progressCount = document.getElementById('progress-count');
+  var progressFill = document.getElementById('progress-fill');
+  function recomputeProgress(){
+    var rows = document.querySelectorAll('#screen-today .exercise-card:not(.skipped) .set-row');
+    var logged = document.querySelectorAll('#screen-today .exercise-card:not(.skipped) .set-row.logged');
+    var total = rows.length;
+    var done = logged.length;
+    progressCount.textContent = done + ' of ' + total;
+    var pct = total ? Math.round((done/total)*100) : 0;
+    progressFill.style.width = pct + '%';
+  }
+
+  function fmtSetValue(weight, reps){
+    return weight ? (weight + ' × ' + reps) : (reps + ' reps');
+  }
+
+  function makeCheckSvg(){
+    var ns = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('class','check-icon');
+    svg.setAttribute('viewBox','0 0 24 24');
+    var fill = document.createElementNS(ns,'circle'); fill.setAttribute('class','fill'); fill.setAttribute('cx','12'); fill.setAttribute('cy','12'); fill.setAttribute('r','9.5');
+    var ring = document.createElementNS(ns,'circle'); ring.setAttribute('class','ring'); ring.setAttribute('cx','12'); ring.setAttribute('cy','12'); ring.setAttribute('r','9.5');
+    var tick = document.createElementNS(ns,'path'); tick.setAttribute('class','tick'); tick.setAttribute('d','M7.5 12.5l3 3 6-6.5');
+    svg.appendChild(fill); svg.appendChild(ring); svg.appendChild(tick);
+    return svg;
+  }
+
+  function wireSetRow(row){
+    row.addEventListener('click', function(){
+      var card = row.closest('.exercise-card');
+      if(card && card.classList.contains('skipped')) return;
+      row.classList.toggle('logged');
+      recomputeProgress();
+    });
+  }
+
+  // ---------- Exercise cards ----------
+  var cards = document.querySelectorAll('.exercise-card');
+  cards.forEach(function(card){
+    card.querySelectorAll('.set-row').forEach(wireSetRow);
+
+    // Skip
+    var skipBtn = card.querySelector('.chip-skip');
+    skipBtn.addEventListener('click', function(){
+      var skipped = card.classList.toggle('skipped');
+      skipBtn.classList.toggle('is-active', skipped);
+      skipBtn.textContent = skipped ? 'Skipped' : 'Skip';
+      recomputeProgress();
+    });
+
+    // Substitute
+    var subBtn = card.querySelector('.chip-sub');
+    var altsAttr = card.dataset.alts || '';
+    var alts = altsAttr ? altsAttr.split('|') : [];
+    var nameEl = card.querySelector('.exercise-name');
+    var badgeEl = card.querySelector('.sub-badge');
+    var originalName = nameEl.textContent;
+    var altIndex = 0;
+    subBtn.addEventListener('click', function(){
+      if(!alts.length) return;
+      altIndex = (altIndex + 1) % (alts.length + 1);
+      if(altIndex === 0){
+        nameEl.textContent = originalName;
+        badgeEl.classList.remove('show');
+        subBtn.classList.remove('is-active');
+      } else {
+        nameEl.textContent = alts[altIndex - 1];
+        badgeEl.classList.add('show');
+        subBtn.classList.add('is-active');
+      }
+    });
+
+    // + Set
+    var addSetBtn = card.querySelector('.chip-addset');
+    var setsWrap = card.querySelector('.sets');
+    addSetBtn.addEventListener('click', function(){
+      var rows = setsWrap.querySelectorAll('.set-row');
+      var last = rows[rows.length - 1];
+      var nextNum = parseInt(last.dataset.set, 10) + 1;
+      var weight = last.dataset.weight;
+      var reps = last.dataset.reps;
+
+      var row = document.createElement('div');
+      row.className = 'set-row';
+      row.dataset.set = nextNum;
+      row.dataset.weight = weight;
+      row.dataset.reps = reps;
+      row.style.animation = 'cardIn .3s cubic-bezier(0.4,0,0.2,1)';
+
+      var label = document.createElement('span');
+      label.className = 'set-label';
+      label.textContent = 'Set ' + nextNum;
+
+      var value = document.createElement('span');
+      value.className = 'set-value';
+      value.textContent = fmtSetValue(weight, reps);
+
+      row.appendChild(label);
+      row.appendChild(value);
+      row.appendChild(makeCheckSvg());
+      setsWrap.appendChild(row);
+      wireSetRow(row);
+      recomputeProgress();
+      showToast('Set ' + nextNum + ' added');
+    });
+
+    // Note
+    var noteBtn = card.querySelector('.chip-note');
+    var noteWrap = card.querySelector('.note-wrap');
+    noteBtn.addEventListener('click', function(){
+      var open = noteWrap.classList.toggle('open');
+      noteBtn.classList.toggle('is-active', open);
+      if(open){ setTimeout(function(){ noteWrap.querySelector('textarea').focus(); }, 150); }
+    });
+
+    // Pain / fatigue flag -> coach nudge
+    var flagBtn = card.querySelector('.chip-flag');
+    var nudge = card.querySelector('.nudge-card');
+    var nudgeText = nudge.querySelector('.nudge-text');
+    var nudgeActions = nudge.querySelector('.nudge-actions');
+    var nudgeAccept = nudge.querySelector('.nudge-accept');
+    var nudgeIgnore = nudge.querySelector('.nudge-ignore');
+
+    function findFirstUnlogged(){
+      return card.querySelector('.set-row:not(.logged)');
+    }
+
+    function computeNudge(row){
+      var w = parseFloat(row.dataset.weight) || 0;
+      var r = parseInt(row.dataset.reps, 10) || 0;
+      var newW, newR, text;
+      if(w > 0){
+        newW = Math.round((w * 0.85) / 5) * 5;
+        newR = Math.max(1, r - 2);
+        text = 'Reduce Set ' + row.dataset.set + ' to ' + newW + ' × ' + newR + '?';
+      } else {
+        newW = 0;
+        newR = Math.max(1, r - 3);
+        text = 'Reduce Set ' + row.dataset.set + ' to ' + newR + ' reps?';
+      }
+      return { text: text, newW: newW, newR: newR };
+    }
+
+    flagBtn.addEventListener('click', function(){
+      if(nudge.classList.contains('open')){
+        nudge.classList.remove('open');
+        flagBtn.classList.remove('is-active');
+        return;
+      }
+      var row = findFirstUnlogged();
+      if(!row){
+        nudgeText.textContent = 'All sets already logged — nothing to adjust.';
+        nudgeActions.style.display = 'none';
+        nudge.removeAttribute('data-target-set');
+      } else {
+        var result = computeNudge(row);
+        nudgeText.textContent = result.text;
+        nudgeActions.style.display = 'flex';
+        nudge.dataset.targetSet = row.dataset.set;
+        nudge.dataset.newW = result.newW;
+        nudge.dataset.newR = result.newR;
+      }
+      nudge.classList.add('open');
+      flagBtn.classList.add('is-active');
+    });
+
+    nudgeIgnore.addEventListener('click', function(){
+      nudge.classList.remove('open');
+      flagBtn.classList.remove('is-active');
+    });
+
+    nudgeAccept.addEventListener('click', function(){
+      var targetSet = nudge.dataset.targetSet;
+      if(targetSet){
+        var row = card.querySelector('.set-row[data-set="' + targetSet + '"]');
+        if(row){
+          var newW = nudge.dataset.newW;
+          var newR = nudge.dataset.newR;
+          row.dataset.weight = newW;
+          row.dataset.reps = newR;
+          row.querySelector('.set-value').textContent = fmtSetValue(newW === '0' ? '' : newW, newR);
+          row.classList.add('logged');
+          recomputeProgress();
+        }
+      }
+      nudge.classList.remove('open');
+      flagBtn.classList.remove('is-active');
+      showToast('Adjustment applied');
+    });
+  });
+
+  recomputeProgress();
+
+  // ---------- Plan screen ----------
+  document.getElementById('start-next-session').addEventListener('click', function(){
+    switchScreen('screen-today');
+    showToast('Loaded Upper Body A');
+  });
+
+  var nextCta = document.getElementById('next-cta');
+  var answerPanel = document.getElementById('answer-panel');
+  nextCta.addEventListener('click', function(){
+    answerPanel.classList.toggle('open');
+  });
+
+  document.getElementById('answer-start').addEventListener('click', function(){
+    switchScreen('screen-today');
+    showToast('Loaded Upper Body A');
+  });
+
+  // ---------- Coach screen ----------
+  var sessionLenBtn = document.getElementById('session-length-btn');
+  sessionLenBtn.addEventListener('click', function(){
+    var opts = sessionLenBtn.dataset.options.split(',');
+    var idx = (parseInt(sessionLenBtn.dataset.index, 10) + 1) % opts.length;
+    sessionLenBtn.dataset.index = idx;
+    sessionLenBtn.textContent = opts[idx] + ' min';
+  });
+
+  document.querySelectorAll('#equipment-wrap .pref-chip').forEach(function(chip){
+    chip.addEventListener('click', function(){ chip.classList.toggle('selected'); });
+  });
+
+  document.getElementById('disliked-wrap').addEventListener('click', function(e){
+    var chip = e.target.closest('.pref-chip.removable');
+    if(!chip) return;
+    chip.classList.add('fade-out');
+    setTimeout(function(){ chip.remove(); }, 220);
+  });
+
+  document.querySelectorAll('#comm-style button').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      document.querySelectorAll('#comm-style button').forEach(function(b){ b.classList.remove('active'); });
+      btn.classList.add('active');
+    });
+  });
+
+  var doctrineWrap = document.getElementById('doctrine-wrap');
+  var addDoctrineBtn = document.getElementById('add-doctrine');
+  var addedDocCount = 0;
+  addDoctrineBtn.addEventListener('click', function(){
+    addedDocCount++;
+    var chip = document.createElement('div');
+    chip.className = 'file-chip';
+    chip.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h8l4 4V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1Z"/><path d="M14 3.5V8h4"/></svg><span class="fname">notes-' + addedDocCount + '.md</span>';
+    doctrineWrap.insertBefore(chip, addDoctrineBtn);
+    showToast('Doctrine file added');
+  });
+
+  document.getElementById('export-md').addEventListener('click', function(){
+    var instructions = document.getElementById('coach-instructions').value;
+    var equipment = Array.prototype.map.call(
+      document.querySelectorAll('#equipment-wrap .pref-chip.selected'),
+      function(c){ return c.textContent.trim(); }
+    ).join(', ');
+    var disliked = Array.prototype.map.call(
+      document.querySelectorAll('#disliked-wrap .pref-chip'),
+      function(c){ return c.textContent.replace('×','').trim(); }
+    ).join(', ');
+    var style = document.querySelector('#comm-style button.active').dataset.val;
+    var sessionLen = sessionLenBtn.textContent;
+
+    var lines = [
+      '# Workout.md — Coach Configuration',
+      '',
+      '## Goals',
+      '- Primary: Hypertrophy',
+      '- Secondary: keep strength',
+      '- 8-week emphasis (Week 3 of 8)',
+      '',
+      '## Coach instructions',
+      instructions,
+      '',
+      '## Preferences',
+      '- Session length: ' + sessionLen,
+      '- Available equipment: ' + equipment,
+      '- Disliked exercises: ' + (disliked || 'none'),
+      '- Communication style: ' + style
+    ];
+    var md = lines.join('\n');
+
+    var blob = new Blob([md], { type: 'text/markdown' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'workout-coach-config.md';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+    showToast('Exported workout-coach-config.md');
+  });
+
+})();
+</script>
+
+</body>
+</html>

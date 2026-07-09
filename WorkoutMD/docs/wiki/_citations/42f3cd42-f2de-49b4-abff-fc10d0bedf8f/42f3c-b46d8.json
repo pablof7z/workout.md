@@ -1,0 +1,6 @@
+{
+  "id": "42f3c-b46d8",
+  "ts": "2026-07-09T19:50:26Z",
+  "session": "42f3cd42-f2de-49b4-abff-fc10d0bedf8f",
+  "text": "- **WorkoutMDApp.swift** — `@main` entry point; `RootView` switches between Today → Runner → Done with no NavigationStack needed.\n- **Models.swift** — Domain model (`Exercise`, `SetTarget`, `WorkoutBlock`/`BlockKind` for straight-sets vs. superset/circuit groups, `Effort`, `SessionSummary`) plus `MockWorkout` with the exact bench/superset-A/circuit data and the `flatten()` function that expands blocks into a flat `[WorkoutStep]` (22 steps total, with rest pages inserted between rounds but never after the final round, matching the spec's `A1,A2,rest,A1,A2,rest,A1,A2` pattern). [...] - Flow: **Today → Runner (22 steps) → Done**.\n"
+}

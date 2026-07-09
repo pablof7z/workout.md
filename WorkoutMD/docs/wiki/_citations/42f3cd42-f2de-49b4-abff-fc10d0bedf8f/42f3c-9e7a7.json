@@ -1,0 +1,6 @@
+{
+  "id": "42f3c-9e7a7",
+  "ts": "2026-07-09T19:50:57Z",
+  "session": "42f3cd42-f2de-49b4-abff-fc10d0bedf8f",
+  "text": "**Theme.swift** — `BackgroundView` now paints an opaque base `Color.black` under the gradient and fills its page frame via `.frame(maxWidth/maxHeight: .infinity)`, and it no longer calls `.ignoresSafeArea()` itself (which, inside scroll content, was what let a page's background bleed into its neighbor). Zero transparency even if a sub-pixel sliver ever appears.\n"
+}

@@ -1,0 +1,6 @@
+{
+  "id": "42f3c-4b622",
+  "ts": "2026-07-09T19:50:29Z",
+  "session": "42f3cd42-f2de-49b4-abff-fc10d0bedf8f",
+  "text": "- **Tracking-first**: structured rich inputs (fields, counters, selectors), never raw Markdown typing.\n- **Rich inputs → Markdown output**: Markdown is the storage/portability layer, not the UI. [...] - **Data ownership + provider flexibility**: portable Markdown, hosted or local AI.\n- **ADHD/2e-friendly** without branding as such. [...] - **Markdown is the substrate, never the interface.** Under the hood every workout is a clean `.md` file you could open in Obsidian. But you never type it. It's the \"your data is yours\" guarantee made real — exportable, syncable, feedable to your own AI.\n- **No streaks, no badges, no shame.** A missed week produces zero red UI. The app's emotional tone is *neutral competence*."
+}

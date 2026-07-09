@@ -1,0 +1,6 @@
+{
+  "id": "42f3c-3c62b",
+  "ts": "2026-07-09T19:51:05Z",
+  "session": "42f3cd42-f2de-49b4-abff-fc10d0bedf8f",
+  "text": "I should be able to tap next or provide very easily feedback on how easy/hard it felt or write a note or whatever.\n [...] - **Coach cues** attached per exercise; **effortless feedback** (Easy/Moderate/Hard pills), quick Note + Skip, big Log & Next.\n- Native polish from your skills: SF Symbols, semantic type, safe-area-inset controls, 44pt targets, haptics. [...] - **ControlsView.swift** — bottom glass cluster: `GlassEffectContainer`-wrapped Easy/Moderate/Hard `EffortPill`s (each paired with an SF Symbols gauge glyph, 44pt min height), an optional subtle reps `+`/`-` nudge (44×44 tap targets), and a second `GlassEffectContainer` with Note (`square.and.pencil`), Skip (`forward.end.fill`), and the primary `.glassProminent` Log & Next / Finish button with a `.symbolEffect(.bounce)` checkmark. Haptics fire exactly as specified: `.selection()` on effort pick, `.impact(.medium)` on Log & Next. Accessibility labels/values are set on all interactive controls and the mini-map.\n- **DoneView.swift** — terse completion screen with `.success` haptic on appear, no gamification. [...] - **Effortless feedback**: Easy / Moderate / Hard pills (with haptics), quick reps stepper, Note, Skip.\n- Flow: **Today → Runner (22 steps) → Done**."
+}

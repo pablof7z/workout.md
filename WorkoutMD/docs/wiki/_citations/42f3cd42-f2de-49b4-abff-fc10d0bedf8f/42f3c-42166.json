@@ -1,0 +1,6 @@
+{
+  "id": "42f3c-42166",
+  "ts": "2026-07-09T19:50:57Z",
+  "session": "42f3cd42-f2de-49b4-abff-fc10d0bedf8f",
+  "text": "2. The `ScrollView` now has `.ignoresSafeArea()`, so its container is the full device height. Each page uses `.containerRelativeFrame([.horizontal, .vertical])` (full width AND height), `LazyVStack(spacing: 0)`, `.scrollTargetLayout()`, `.scrollTargetBehavior(.paging)` → the paging stride equals the screen height, so pages snap 1:1 with no seam.\n3. The top context strip and bottom control cluster moved from `.safeAreaInset` to `.overlay(alignment: .top/.bottom)` on the ScrollView, positioned into the safe area with `.padding(.top, safeTop + 6)` / `.padding(.bottom, safeBottom + 8)`. They no longer resize the scroll content — they float over the current page only."
+}

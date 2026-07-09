@@ -1,0 +1,6 @@
+{
+  "id": "42f3c-3854e",
+  "ts": "2026-07-09T19:50:57Z",
+  "session": "42f3cd42-f2de-49b4-abff-fc10d0bedf8f",
+  "text": "3. The top context strip and bottom control cluster moved from `.safeAreaInset` to `.overlay(alignment: .top/.bottom)` on the ScrollView, positioned into the safe area with `.padding(.top, safeTop + 6)` / `.padding(.bottom, safeBottom + 8)`. They no longer resize the scroll content — they float over the current page only.\n [...] **The fix:** the ghosting you spotted was `.safeAreaInset` shrinking the scroll container so pages were shorter than the screen and leaked the next page behind the glass. Now each page is full-height (`.containerRelativeFrame([.horizontal, .vertical])`), controls float as an overlay inside the safe area, and backgrounds are opaque edge-to-edge — clean 1:1 snaps, verified on both a straight-set and a superset page.\n"
+}

@@ -1,0 +1,14 @@
+# Xcode / Swift
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.swiftpm/
+*.moved-aside
+*.pbxuser
+
+# macOS
+.DS_Store
+
+# Node (in case tooling needs it)
+node_modules/
