@@ -102,6 +102,9 @@ struct SetPageInfo {
     let setNumber: Int
     let totalSets: Int
     let groupLabel: String?
+    /// Nil for a straight-sets block; `.superset` or `.circuit` inside a group. Carried through so
+    /// history persistence can record the block's organization without guessing from the label text.
+    let groupKind: GroupKind?
     let round: Int?
     let totalRounds: Int?
     let miniMap: [MiniMapItem]?
@@ -152,6 +155,9 @@ struct CoachMessage: Identifiable {
     let id = UUID()
     let kind: Kind
     let text: String
+    /// When the line was sent, so a full-session transcript (spanning many exercises) can be
+    /// reassembled in chronological order when snapshotted to history.
+    let date: Date = .now
 }
 
 /// Summary shown on the Done screen at the end of a session.
@@ -184,8 +190,16 @@ final class WorkoutSession {
     /// Exercises marked to deload / skip upcoming sessions.
     var deloaded: Set<String> = []
 
+    /// A snapshot of `steps` as they stood at session start, before any coach edit or reps-stepper
+    /// nudge mutated a target in place. `WorkoutStep`/`SetPageInfo`/`Exercise` are all value types, so
+    /// this copy is fully independent of `steps` and stays the "prescribed" record for history —
+    /// while `steps` (mutated live) stands in for "actual" once the session finishes.
+    let startedAt: Date = .now
+    let prescribedSteps: [WorkoutStep]
+
     init(steps: [WorkoutStep] = MockWorkout.steps) {
         self.steps = steps
+        self.prescribedSteps = steps
         self.currentStepID = steps.first?.id
     }
 
@@ -374,6 +388,7 @@ final class WorkoutSession {
 
 enum MockWorkout {
     static let name = "Upper Body A"
+    static let goal = "Hypertrophy"
     static let summary = "3 blocks · ~45 min · Hypertrophy"
 
     static let blocks: [WorkoutBlock] = {
@@ -445,6 +460,7 @@ enum MockWorkout {
                         setNumber: setNumber,
                         totalSets: sets,
                         groupLabel: nil,
+                        groupKind: nil,
                         round: nil,
                         totalRounds: nil,
                         miniMap: nil
@@ -452,7 +468,7 @@ enum MockWorkout {
                     result.append(WorkoutStep(blockIndex: blockIndex, blockName: block.name, moodKey: exercise.moodKey, page: .set(info), exerciseName: exercise.name))
                 }
 
-            case .group(_, let label, let letterPrefix, let exercises, let rounds, let restSeconds):
+            case .group(let groupKind, let label, let letterPrefix, let exercises, let rounds, let restSeconds):
                 for round in 1...rounds {
                     for (exIndex, exercise) in exercises.enumerated() {
                         let miniMap = exercises.enumerated().map { idx, ex -> MiniMapItem in
@@ -467,6 +483,7 @@ enum MockWorkout {
                             setNumber: exIndex + 1,
                             totalSets: exercises.count,
                             groupLabel: label,
+                            groupKind: groupKind,
                             round: round,
                             totalRounds: rounds,
                             miniMap: miniMap

@@ -1,8 +1,12 @@
 import SwiftUI
 
-/// The minimal "Today" landing screen — full-bleed, calm, one clear action: Start.
+/// The minimal "Today" landing screen — full-bleed, calm, one clear action: Start. A small glass
+/// History button sits in the top-trailing corner — the one concession to secondary navigation on
+/// an otherwise single-purpose screen.
 struct TodayView: View {
     var onStart: () -> Void
+
+    @State private var showingHistory = false
 
     var body: some View {
         ZStack {
@@ -10,6 +14,11 @@ struct TodayView: View {
                 .ignoresSafeArea()
 
             VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    Spacer()
+                    HistoryButton { showingHistory = true }
+                }
+
                 Spacer()
 
                 Text("WORKOUT.MD")
@@ -43,6 +52,28 @@ struct TodayView: View {
                 .padding(.bottom, 24)
             }
             .padding(.horizontal, 28)
+            .padding(.top, 12)
         }
+        .sheet(isPresented: $showingHistory) {
+            HistoryView()
+        }
+    }
+}
+
+/// Small floating glass icon button that opens past-session History.
+private struct HistoryButton: View {
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.9))
+                .frame(width: 40, height: 40)
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: .circle)
+        .accessibilityLabel("History")
+        .accessibilityHint("View past workout sessions")
     }
 }
