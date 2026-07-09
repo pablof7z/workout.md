@@ -1,11 +1,12 @@
 //! `workout-core` — Workout.md's Rust core, exposed to the native iOS shell
 //! through a UniFFI facade.
 //!
-//! This crate is deliberately minimal. Its only job in this PR is to prove
-//! the Rust <-> Swift pipeline builds and links for both the simulator and
-//! device, with a trivial call across the FFI boundary landing on a real
-//! Rust-owned object. It does not yet carry rig.rs/LLM or Nostr integration
-//! — that lands in a follow-up PR.
+//! Alongside the minimal `WorkoutCore` proof-of-pipeline object, this crate
+//! now carries the LLM coach engine (see [`coach`]) built on rig.rs: provider
+//! configuration, a streaming turn loop, and the coach tool set. Nostr
+//! integration is still a follow-up.
+
+pub mod coach;
 
 uniffi::setup_scaffolding!();
 

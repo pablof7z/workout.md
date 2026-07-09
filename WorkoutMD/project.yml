@@ -106,5 +106,15 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: Sources/Bridge/WorkoutCore.h
         "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]": "$(inherited) $(SRCROOT)/Build/Rust/$(SDK_NAME)"
         "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]": "$(inherited) $(SRCROOT)/Build/Rust/$(SDK_NAME)"
-        OTHER_LDFLAGS: "$(inherited) -lworkout_core"
+        # The coach engine (rig.rs + reqwest + rustls) pulls in system
+        # frameworks the plain proof-of-pipeline core didn't need:
+        #   - Security: rustls-platform-verifier verifies TLS certs through
+        #     the OS trust store (SecTrust*) instead of a bundled root CA
+        #     list.
+        #   - CoreFoundation/SystemConfiguration: transitive requirements of
+        #     Security-based cert verification and of `getifaddrs`-based
+        #     reachability code paths used lower in the network stack.
+        #   - libz/libiconv: transitive requirements of libcurl-adjacent
+        #     HTTP/2 (h2)/compression and ICU (via url/idna) crates.
+        OTHER_LDFLAGS: "$(inherited) -lworkout_core -framework Security -framework CoreFoundation -framework SystemConfiguration -lz -liconv"
         ENABLE_USER_SCRIPT_SANDBOXING: NO
