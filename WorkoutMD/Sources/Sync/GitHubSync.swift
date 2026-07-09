@@ -165,7 +165,17 @@ final class GitHubSync {
     }
 
     static func sessionPath(date: Date, workoutName: String) -> String {
-        "sessions/\(dayFormatter.string(from: date))-\(slugify(workoutName)).md"
+        "sessions/\(sessionFileName(date: date, workoutName: workoutName))"
+    }
+
+    /// Just the filename portion of `sessionPath(for:)` — no `sessions/` prefix. Shared with
+    /// `ICloudSync` so both mirrors write the exact same session under the exact same name.
+    static func sessionFileName(for record: WorkoutRecord) -> String {
+        sessionFileName(date: record.date, workoutName: record.name)
+    }
+
+    static func sessionFileName(date: Date, workoutName: String) -> String {
+        "\(dayFormatter.string(from: date))-\(slugify(workoutName)).md"
     }
 
     private static func slugify(_ text: String) -> String {

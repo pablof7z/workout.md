@@ -329,10 +329,34 @@ private struct SyncSection: View {
                 Label("Sync now", systemImage: "arrow.triangle.2.circlepath")
             }
             .disabled(!manager.isAuthenticated)
+
+            Divider()
+
+            Toggle("iCloud sync", isOn: $settings.icloudSyncEnabled)
+                .onChange(of: settings.icloudSyncEnabled) { _, enabled in
+                    manager.icloudToggleChanged(enabled: enabled)
+                }
+
+            LabeledContent("iCloud status", value: manager.icloudStatus.label)
+            if settings.icloudSyncEnabled && !manager.isICloudAvailable {
+                Text("Not signed in to iCloud, or iCloud Drive is off for this app. Sign in under the Settings app > your name > iCloud.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+            if let lastICloudSyncedAt = manager.lastICloudSyncedAt {
+                LabeledContent("iCloud last synced", value: lastICloudSyncedAt.formatted(date: .abbreviated, time: .shortened))
+            }
+
+            Button {
+                Task { await manager.pullICloudNow() }
+            } label: {
+                Label("Sync iCloud now", systemImage: "icloud.and.arrow.up")
+            }
+            .disabled(!settings.icloudSyncEnabled)
         } header: {
-            Text("Sync (GitHub)")
+            Text("Sync")
         } footer: {
-            Text("Paste a fine-grained or classic PAT with repo scope — sign-in-with-GitHub (device flow) needs a registered OAuth App client id and isn't wired up yet. The token lives only in the Keychain.")
+            Text("GitHub: paste a fine-grained or classic PAT with repo scope — sign-in-with-GitHub (device flow) needs a registered OAuth App client id and isn't wired up yet. iCloud: mirrors the same Markdown into this app's iCloud Drive container instead of (or alongside) GitHub — the two are independent and don't affect each other. Nothing here leaves the Keychain except the Markdown itself.")
         }
         .onAppear {
             token = (try? GitHubAuth.shared.currentToken()) ?? ""

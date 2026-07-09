@@ -6,12 +6,14 @@ import Observation
 enum SyncStatus: Equatable {
     case idle
     case syncing
+    case unavailable
     case error(String)
 
     var label: String {
         switch self {
         case .idle: return "Idle"
         case .syncing: return "Syncing…"
+        case .unavailable: return "Unavailable — sign in to iCloud"
         case .error(let message): return "Error: \(message)"
         }
     }
@@ -37,6 +39,20 @@ final class SyncManager {
     /// Wiring an actual review UI/flow is a later workstream — this closure is the plug point.
     var onExternalChanges: (([GitHubSync.ChangedFile]) -> Void)?
 
+    // MARK: - iCloud mirror
+    //
+    // Fully independent of the GitHub properties/methods above: separate status, separate
+    // last-synced timestamp, gated by its own `AppSettings.icloudSyncEnabled` toggle rather than
+    // GitHub auth. Both are just separate mirrors of the same rendered Markdown — see `ICloudSync`'s
+    // doc comment.
+
+    let icloud: ICloudSync
+    private(set) var icloudStatus: SyncStatus = .idle
+    private(set) var lastICloudSyncedAt: Date?
+    var onICloudExternalChanges: (([ICloudSync.ChangedFile]) -> Void)?
+
+    var isICloudAvailable: Bool { icloud.isAvailable }
+
     let auth: GitHubAuth
     let sync: GitHubSync
 
@@ -46,21 +62,29 @@ final class SyncManager {
     var isAuthenticated: Bool { auth.isAuthenticated }
     var pendingCommitCount: Int { sync.pendingCommitCount }
 
-    init(auth: GitHubAuth = .shared, sync: GitHubSync? = nil, pullInterval: TimeInterval = 15 * 60) {
+    init(auth: GitHubAuth = .shared, sync: GitHubSync? = nil, icloud: ICloudSync? = nil, pullInterval: TimeInterval = 15 * 60) {
         self.auth = auth
         self.sync = sync ?? GitHubSync(auth: auth)
+        self.icloud = icloud ?? ICloudSync()
         self.pullInterval = pullInterval
         self.sync.onExternalChanges = { [weak self] changes in
             self?.lastExternalChanges = changes
             self?.onExternalChanges?(changes)
         }
+        self.icloud.onExternalChanges = { [weak self] changes in
+            self?.onICloudExternalChanges?(changes)
+        }
     }
 
     // MARK: - App lifecycle hooks
 
-    /// Call from `.onAppear`/`scenePhase == .active`: pulls immediately and (re)starts the periodic
-    /// pull timer.
+    /// Call from `.onAppear`/`scenePhase == .active`: pulls immediately (GitHub + iCloud), (re)starts
+    /// the periodic GitHub pull timer, and — if the iCloud toggle is on — starts the live
+    /// `NSMetadataQuery` watch so an edit made on another device flows in while foregrounded.
     func appDidBecomeActive() {
+        if AppSettings.shared.icloudSyncEnabled {
+            icloud.startObserving()
+        }
         Task { await pullNow() }
         pullTimer?.invalidate()
         pullTimer = Timer.scheduledTimer(withTimeInterval: pullInterval, repeats: true) { [weak self] _ in
@@ -68,24 +92,32 @@ final class SyncManager {
         }
     }
 
-    /// Call from `scenePhase == .background`: stops the timer so it doesn't fire while suspended.
+    /// Call from `scenePhase == .background`: stops the GitHub pull timer and the iCloud
+    /// `NSMetadataQuery` watch so neither fires while suspended.
     func appDidEnterBackground() {
+        icloud.stopObserving()
         pullTimer?.invalidate()
         pullTimer = nil
     }
 
     // MARK: - Commit hook (wire into the Done/save flow)
 
-    /// Commits a just-finished session's Markdown. Call this right after the session is saved to
-    /// SwiftData (see `WorkoutMDApp.saveToHistory`). Silently does nothing if no token is stored
-    /// yet — sync is opt-in until a token is set.
+    /// Commits a just-finished session's Markdown to every enabled sync target. Call this right
+    /// after the session is saved to SwiftData (see `WorkoutMDApp.saveToHistory`). Each target is
+    /// independent: the iCloud mirror (gated by `AppSettings.icloudSyncEnabled`) runs regardless of
+    /// GitHub auth state, and a GitHub failure doesn't undo or block the iCloud write (or vice
+    /// versa). Silently does nothing for GitHub if no token is stored yet, and nothing for iCloud if
+    /// its toggle is off — both syncs are opt-in.
     @discardableResult
     func commitSession(_ record: WorkoutRecord) async -> Bool {
+        let markdown = MarkdownGenerator.renderSession(record)
+
+        await commitSessionToICloud(record, markdown: markdown)
+
         guard isAuthenticated else { return false }
         status = .syncing
         let path = GitHubSync.sessionPath(for: record)
-        let markdown = MarkdownGenerator.renderSession(record)
-        let message = "Log \(record.name) — \(GitHubSync.sessionPath(for: record))"
+        let message = "Log \(record.name) — \(path)"
         do {
             _ = try await sync.commitSession(markdown: markdown, path: path, message: message)
             lastSyncedAt = .now
@@ -100,12 +132,31 @@ final class SyncManager {
         }
     }
 
+    private func commitSessionToICloud(_ record: WorkoutRecord, markdown: String) async {
+        guard AppSettings.shared.icloudSyncEnabled else { return }
+        icloudStatus = .syncing
+        do {
+            let filename = GitHubSync.sessionFileName(for: record)
+            _ = try await icloud.writeSession(markdown: markdown, filename: filename)
+            let plan = MarkdownGenerator.renderPlan(name: MockWorkout.name, goal: MockWorkout.goal, blocks: MockWorkout.blocks)
+            try? await icloud.writePlan(markdown: plan)
+            lastICloudSyncedAt = .now
+            icloudStatus = .idle
+        } catch ICloudSync.ICloudSyncError.unavailable {
+            icloudStatus = .unavailable
+        } catch {
+            icloudStatus = .error(error.localizedDescription)
+        }
+    }
+
     // MARK: - Pull
 
     /// Pulls recent commits, ingesting any external changes and retrying anything queued from a
     /// previously-failed commit. Safe to call anytime (foreground, timer, or the debug button) —
     /// every step is idempotent.
     func pullNow() async {
+        await pullICloudNow()
+
         guard isAuthenticated else { return }
         status = .syncing
         do {
@@ -118,6 +169,41 @@ final class SyncManager {
             status = .idle
         } catch {
             status = .error(error.localizedDescription)
+        }
+    }
+
+    /// Pulls the iCloud mirror only — independent of GitHub auth/pull above, gated by its own
+    /// `AppSettings.icloudSyncEnabled` toggle. Exposed separately (rather than folded silently into
+    /// `pullNow()`) so Settings' "Sync iCloud now" button and the toggle's on-change handler can
+    /// trigger just this half and see its own status update immediately.
+    @discardableResult
+    func pullICloudNow() async -> Bool {
+        guard AppSettings.shared.icloudSyncEnabled else { return false }
+        icloudStatus = .syncing
+        do {
+            _ = try await icloud.pull()
+            lastICloudSyncedAt = .now
+            icloudStatus = .idle
+            return true
+        } catch ICloudSync.ICloudSyncError.unavailable {
+            icloudStatus = .unavailable
+            return false
+        } catch {
+            icloudStatus = .error(error.localizedDescription)
+            return false
+        }
+    }
+
+    /// Call from the Settings toggle's `onChange` so flipping it on/off takes effect immediately
+    /// (starts/stops the live watch and does an immediate pull) rather than waiting for the next
+    /// foreground/session-save.
+    func icloudToggleChanged(enabled: Bool) {
+        if enabled {
+            icloud.startObserving()
+            Task { await pullICloudNow() }
+        } else {
+            icloud.stopObserving()
+            icloudStatus = .idle
         }
     }
 }
