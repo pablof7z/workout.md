@@ -1,0 +1,6 @@
+{
+  "id": "43fd9-3cbd9",
+  "ts": "2026-07-09T20:44:55Z",
+  "session": "43fd928f-6da0-404c-a38a-406d6cdfb05f",
+  "text": "One thing worth noting: the bundle identifier came out as `md.workout` instead of the `com.workoutmd.prototype` set in `project.yml` — automatic signing on a free/personal team can rewrite the bundle ID to match what's registered for your account. Not a problem functionally, just flagging it in case it matters later (e.g., if you add entitlements tied to a specific bundle ID)."
+}
