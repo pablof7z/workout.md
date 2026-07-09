@@ -286,6 +286,20 @@ typedef void (*UniffiCallbackInterfaceCoachSinkMethod3)(uint64_t, RustBuffer, vo
     );
 
 #endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_NOSTR_SINK_METHOD0
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_NOSTR_SINK_METHOD0
+typedef void (*UniffiCallbackInterfaceNostrSinkMethod0)(uint64_t, RustBuffer, RustBuffer, RustBuffer, uint64_t, void* _Nonnull, 
+        RustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+#endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_NOSTR_SINK_METHOD1
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_NOSTR_SINK_METHOD1
+typedef void (*UniffiCallbackInterfaceNostrSinkMethod1)(uint64_t, RustBuffer, void* _Nonnull, 
+        RustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+#endif
 #ifndef UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_COACH_HOST
 #define UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_COACH_HOST
 typedef struct UniffiVTableCallbackInterfaceCoachHost {
@@ -303,6 +317,15 @@ typedef struct UniffiVTableCallbackInterfaceCoachSink {
     UniffiCallbackInterfaceCoachSinkMethod3 _Nonnull onError;
     UniffiCallbackInterfaceFree _Nonnull uniffiFree;
 } UniffiVTableCallbackInterfaceCoachSink;
+
+#endif
+#ifndef UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_NOSTR_SINK
+#define UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_NOSTR_SINK
+typedef struct UniffiVTableCallbackInterfaceNostrSink {
+    UniffiCallbackInterfaceNostrSinkMethod0 _Nonnull onMessage;
+    UniffiCallbackInterfaceNostrSinkMethod1 _Nonnull onError;
+    UniffiCallbackInterfaceFree _Nonnull uniffiFree;
+} UniffiVTableCallbackInterfaceNostrSink;
 
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_CLONE_COACHENGINE
@@ -329,6 +352,72 @@ void uniffi_workout_core_fn_method_coachengine_configure_coach(void*_Nonnull ptr
 #ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_METHOD_COACHENGINE_SEND_MESSAGE
 #define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_METHOD_COACHENGINE_SEND_MESSAGE
 void uniffi_workout_core_fn_method_coachengine_send_message(void*_Nonnull ptr, RustBuffer system_prompt, RustBuffer user_message, RustBuffer history_json, uint64_t sink, uint64_t host, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_CLONE_NOSTRCOACH
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_CLONE_NOSTRCOACH
+void*_Nonnull uniffi_workout_core_fn_clone_nostrcoach(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_FREE_NOSTRCOACH
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_FREE_NOSTRCOACH
+void uniffi_workout_core_fn_free_nostrcoach(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_CONSTRUCTOR_NOSTRCOACH_NEW
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_CONSTRUCTOR_NOSTRCOACH_NEW
+void*_Nonnull uniffi_workout_core_fn_constructor_nostrcoach_new(RustCallStatus *_Nonnull out_status
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_METHOD_NOSTRCOACH_ADD_MEMBER
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_METHOD_NOSTRCOACH_ADD_MEMBER
+RustBuffer uniffi_workout_core_fn_method_nostrcoach_add_member(void*_Nonnull ptr, RustBuffer channel, RustBuffer pubkey, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_METHOD_NOSTRCOACH_CONFIGURE
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_METHOD_NOSTRCOACH_CONFIGURE
+void uniffi_workout_core_fn_method_nostrcoach_configure(void*_Nonnull ptr, RustBuffer relays, RustBuffer indexer_relay, RustBuffer channel, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_METHOD_NOSTRCOACH_CREATE_GROUP
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_METHOD_NOSTRCOACH_CREATE_GROUP
+RustBuffer uniffi_workout_core_fn_method_nostrcoach_create_group(void*_Nonnull ptr, RustBuffer channel, RustBuffer name, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_METHOD_NOSTRCOACH_CURRENT_NPUB
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_METHOD_NOSTRCOACH_CURRENT_NPUB
+RustBuffer uniffi_workout_core_fn_method_nostrcoach_current_npub(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_METHOD_NOSTRCOACH_EXPORT_NSEC
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_METHOD_NOSTRCOACH_EXPORT_NSEC
+RustBuffer uniffi_workout_core_fn_method_nostrcoach_export_nsec(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_METHOD_NOSTRCOACH_GENERATE_IDENTITY
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_METHOD_NOSTRCOACH_GENERATE_IDENTITY
+RustBuffer uniffi_workout_core_fn_method_nostrcoach_generate_identity(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_METHOD_NOSTRCOACH_IMPORT_NSEC
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_METHOD_NOSTRCOACH_IMPORT_NSEC
+void uniffi_workout_core_fn_method_nostrcoach_import_nsec(void*_Nonnull ptr, RustBuffer nsec, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_METHOD_NOSTRCOACH_PUBLISH_MESSAGE
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_METHOD_NOSTRCOACH_PUBLISH_MESSAGE
+RustBuffer uniffi_workout_core_fn_method_nostrcoach_publish_message(void*_Nonnull ptr, RustBuffer body, RustBuffer reply_to, RustBuffer mention_pubkey, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_METHOD_NOSTRCOACH_PUBLISH_PROFILE
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_METHOD_NOSTRCOACH_PUBLISH_PROFILE
+RustBuffer uniffi_workout_core_fn_method_nostrcoach_publish_profile(void*_Nonnull ptr, RustBuffer name, RustBuffer about, RustBuffer picture, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_METHOD_NOSTRCOACH_START_SUBSCRIPTION
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_METHOD_NOSTRCOACH_START_SUBSCRIPTION
+void uniffi_workout_core_fn_method_nostrcoach_start_subscription(void*_Nonnull ptr, uint64_t sink, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_CLONE_WORKOUTCORE
@@ -365,6 +454,11 @@ void uniffi_workout_core_fn_init_callback_vtable_coachhost(const UniffiVTableCal
 #ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_INIT_CALLBACK_VTABLE_COACHSINK
 #define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_INIT_CALLBACK_VTABLE_COACHSINK
 void uniffi_workout_core_fn_init_callback_vtable_coachsink(const UniffiVTableCallbackInterfaceCoachSink* _Nonnull vtable
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_INIT_CALLBACK_VTABLE_NOSTRSINK
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_INIT_CALLBACK_VTABLE_NOSTRSINK
+void uniffi_workout_core_fn_init_callback_vtable_nostrsink(const UniffiVTableCallbackInterfaceNostrSink* _Nonnull vtable
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_FN_FUNC_CORE_VERSION
@@ -683,6 +777,66 @@ uint16_t uniffi_workout_core_checksum_method_coachengine_send_message(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_NOSTRCOACH_ADD_MEMBER
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_NOSTRCOACH_ADD_MEMBER
+uint16_t uniffi_workout_core_checksum_method_nostrcoach_add_member(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_NOSTRCOACH_CONFIGURE
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_NOSTRCOACH_CONFIGURE
+uint16_t uniffi_workout_core_checksum_method_nostrcoach_configure(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_NOSTRCOACH_CREATE_GROUP
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_NOSTRCOACH_CREATE_GROUP
+uint16_t uniffi_workout_core_checksum_method_nostrcoach_create_group(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_NOSTRCOACH_CURRENT_NPUB
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_NOSTRCOACH_CURRENT_NPUB
+uint16_t uniffi_workout_core_checksum_method_nostrcoach_current_npub(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_NOSTRCOACH_EXPORT_NSEC
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_NOSTRCOACH_EXPORT_NSEC
+uint16_t uniffi_workout_core_checksum_method_nostrcoach_export_nsec(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_NOSTRCOACH_GENERATE_IDENTITY
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_NOSTRCOACH_GENERATE_IDENTITY
+uint16_t uniffi_workout_core_checksum_method_nostrcoach_generate_identity(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_NOSTRCOACH_IMPORT_NSEC
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_NOSTRCOACH_IMPORT_NSEC
+uint16_t uniffi_workout_core_checksum_method_nostrcoach_import_nsec(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_NOSTRCOACH_PUBLISH_MESSAGE
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_NOSTRCOACH_PUBLISH_MESSAGE
+uint16_t uniffi_workout_core_checksum_method_nostrcoach_publish_message(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_NOSTRCOACH_PUBLISH_PROFILE
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_NOSTRCOACH_PUBLISH_PROFILE
+uint16_t uniffi_workout_core_checksum_method_nostrcoach_publish_profile(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_NOSTRCOACH_START_SUBSCRIPTION
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_NOSTRCOACH_START_SUBSCRIPTION
+uint16_t uniffi_workout_core_checksum_method_nostrcoach_start_subscription(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_WORKOUTCORE_ECHO
 #define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_WORKOUTCORE_ECHO
 uint16_t uniffi_workout_core_checksum_method_workoutcore_echo(void
@@ -698,6 +852,12 @@ uint16_t uniffi_workout_core_checksum_method_workoutcore_greeting(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_CONSTRUCTOR_COACHENGINE_NEW
 #define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_CONSTRUCTOR_COACHENGINE_NEW
 uint16_t uniffi_workout_core_checksum_constructor_coachengine_new(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_CONSTRUCTOR_NOSTRCOACH_NEW
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_CONSTRUCTOR_NOSTRCOACH_NEW
+uint16_t uniffi_workout_core_checksum_constructor_nostrcoach_new(void
     
 );
 #endif
@@ -734,6 +894,18 @@ uint16_t uniffi_workout_core_checksum_method_coachsink_on_completed(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_COACHSINK_ON_ERROR
 #define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_COACHSINK_ON_ERROR
 uint16_t uniffi_workout_core_checksum_method_coachsink_on_error(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_NOSTRSINK_ON_MESSAGE
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_NOSTRSINK_ON_MESSAGE
+uint16_t uniffi_workout_core_checksum_method_nostrsink_on_message(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_NOSTRSINK_ON_ERROR
+#define UNIFFI_FFIDEF_UNIFFI_WORKOUT_CORE_CHECKSUM_METHOD_NOSTRSINK_ON_ERROR
+uint16_t uniffi_workout_core_checksum_method_nostrsink_on_error(void
     
 );
 #endif
