@@ -395,7 +395,13 @@ fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
 
 
 // Public interface members begin here.
-
+// Magic number for the Rust proxy to call using the same mechanism as every other method,
+// to free the callback once it's dropped by Rust.
+private let IDX_CALLBACK_FREE: Int32 = 0
+// Callback return codes
+private let UNIFFI_CALLBACK_SUCCESS: Int32 = 0
+private let UNIFFI_CALLBACK_ERROR: Int32 = 1
+private let UNIFFI_CALLBACK_UNEXPECTED_ERROR: Int32 = 2
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -437,6 +443,185 @@ fileprivate struct FfiConverterString: FfiConverter {
         writeBytes(&buf, value.utf8)
     }
 }
+
+
+
+
+/**
+ * The coach engine. One instance owns a dedicated background tokio runtime
+ * used for every `send_message` call, so streaming a coach turn never
+ * blocks the Swift caller's thread (typically the main/UI thread).
+ */
+public protocol CoachEngineProtocol: AnyObject, Sendable {
+    
+    /**
+     * Configure (or reconfigure) the provider and model used by future
+     * `send_message` calls. Safe to call again mid-lifetime (e.g. the user
+     * changes provider in Settings) — takes effect on the next turn.
+     */
+    func configureCoach(provider: ProviderConfig, model: String) 
+    
+    /**
+     * Stream one coach turn. Returns immediately; every event is delivered
+     * to `sink` from this engine's background runtime. Tool calls the model
+     * makes are routed through `host`.
+     *
+     * `history_json` is a JSON array of `{"role": "user"|"assistant", "content": "..."}`
+     * objects, oldest first. Pass `"[]"` for a fresh conversation.
+     */
+    func sendMessage(systemPrompt: String, userMessage: String, historyJson: String, sink: CoachSink, host: CoachHost) 
+    
+}
+/**
+ * The coach engine. One instance owns a dedicated background tokio runtime
+ * used for every `send_message` call, so streaming a coach turn never
+ * blocks the Swift caller's thread (typically the main/UI thread).
+ */
+open class CoachEngine: CoachEngineProtocol, @unchecked Sendable {
+    fileprivate let pointer: UnsafeMutableRawPointer!
+
+    /// Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoPointer {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
+        self.pointer = pointer
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noPointer: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing [Pointer] the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noPointer: NoPointer) {
+        self.pointer = nil
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiClonePointer() -> UnsafeMutableRawPointer {
+        return try! rustCall { uniffi_workout_core_fn_clone_coachengine(self.pointer, $0) }
+    }
+public convenience init() {
+    let pointer =
+        try! rustCall() {
+    uniffi_workout_core_fn_constructor_coachengine_new($0
+    )
+}
+    self.init(unsafeFromRawPointer: pointer)
+}
+
+    deinit {
+        guard let pointer = pointer else {
+            return
+        }
+
+        try! rustCall { uniffi_workout_core_fn_free_coachengine(pointer, $0) }
+    }
+
+    
+
+    
+    /**
+     * Configure (or reconfigure) the provider and model used by future
+     * `send_message` calls. Safe to call again mid-lifetime (e.g. the user
+     * changes provider in Settings) — takes effect on the next turn.
+     */
+open func configureCoach(provider: ProviderConfig, model: String)  {try! rustCall() {
+    uniffi_workout_core_fn_method_coachengine_configure_coach(self.uniffiClonePointer(),
+        FfiConverterTypeProviderConfig_lower(provider),
+        FfiConverterString.lower(model),$0
+    )
+}
+}
+    
+    /**
+     * Stream one coach turn. Returns immediately; every event is delivered
+     * to `sink` from this engine's background runtime. Tool calls the model
+     * makes are routed through `host`.
+     *
+     * `history_json` is a JSON array of `{"role": "user"|"assistant", "content": "..."}`
+     * objects, oldest first. Pass `"[]"` for a fresh conversation.
+     */
+open func sendMessage(systemPrompt: String, userMessage: String, historyJson: String, sink: CoachSink, host: CoachHost)  {try! rustCall() {
+    uniffi_workout_core_fn_method_coachengine_send_message(self.uniffiClonePointer(),
+        FfiConverterString.lower(systemPrompt),
+        FfiConverterString.lower(userMessage),
+        FfiConverterString.lower(historyJson),
+        FfiConverterCallbackInterfaceCoachSink_lower(sink),
+        FfiConverterCallbackInterfaceCoachHost_lower(host),$0
+    )
+}
+}
+    
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCoachEngine: FfiConverter {
+
+    typealias FfiType = UnsafeMutableRawPointer
+    typealias SwiftType = CoachEngine
+
+    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> CoachEngine {
+        return CoachEngine(unsafeFromRawPointer: pointer)
+    }
+
+    public static func lower(_ value: CoachEngine) -> UnsafeMutableRawPointer {
+        return value.uniffiClonePointer()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CoachEngine {
+        let v: UInt64 = try readInt(&buf)
+        // The Rust code won't compile if a pointer won't fit in a UInt64.
+        // We have to go via `UInt` because that's the thing that's the size of a pointer.
+        let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: v))
+        if (ptr == nil) {
+            throw UniffiInternalError.unexpectedNullPointer
+        }
+        return try lift(ptr!)
+    }
+
+    public static func write(_ value: CoachEngine, into buf: inout [UInt8]) {
+        // This fiddling is because `Int` is the thing that's the same size as a pointer.
+        // The Rust code won't compile if a pointer won't fit in a `UInt64`.
+        writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCoachEngine_lift(_ pointer: UnsafeMutableRawPointer) throws -> CoachEngine {
+    return try FfiConverterTypeCoachEngine.lift(pointer)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCoachEngine_lower(_ value: CoachEngine) -> UnsafeMutableRawPointer {
+    return FfiConverterTypeCoachEngine.lower(value)
+}
+
+
 
 
 
@@ -600,6 +785,458 @@ public func FfiConverterTypeWorkoutCore_lower(_ value: WorkoutCore) -> UnsafeMut
 }
 
 
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Provider selection + credentials for the coach engine.
+ *
+ * Deliberately has no `#[derive(Debug)]` — see the hand-written [`fmt::Debug`]
+ * impl below, which redacts API keys. Never log a `ProviderConfig` any other
+ * way.
+ */
+
+public enum ProviderConfig {
+    
+    case openRouter(apiKey: String, baseUrl: String?
+    )
+    case ollama(baseUrl: String, apiKey: String?
+    )
+}
+
+
+#if compiler(>=6)
+extension ProviderConfig: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeProviderConfig: FfiConverterRustBuffer {
+    typealias SwiftType = ProviderConfig
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ProviderConfig {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .openRouter(apiKey: try FfiConverterString.read(from: &buf), baseUrl: try FfiConverterOptionString.read(from: &buf)
+        )
+        
+        case 2: return .ollama(baseUrl: try FfiConverterString.read(from: &buf), apiKey: try FfiConverterOptionString.read(from: &buf)
+        )
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ProviderConfig, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case let .openRouter(apiKey,baseUrl):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(apiKey, into: &buf)
+            FfiConverterOptionString.write(baseUrl, into: &buf)
+            
+        
+        case let .ollama(baseUrl,apiKey):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(baseUrl, into: &buf)
+            FfiConverterOptionString.write(apiKey, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeProviderConfig_lift(_ buf: RustBuffer) throws -> ProviderConfig {
+    return try FfiConverterTypeProviderConfig.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeProviderConfig_lower(_ value: ProviderConfig) -> RustBuffer {
+    return FfiConverterTypeProviderConfig.lower(value)
+}
+
+
+extension ProviderConfig: Equatable, Hashable {}
+
+
+
+
+
+
+
+
+
+/**
+ * Tool-execution host the Swift app implements. Every coach tool call is
+ * routed here because tool side effects belong to the app's
+ * `WorkoutSession`, not to this crate; the returned string is fed back to
+ * the model as the tool result.
+ */
+public protocol CoachHost: AnyObject, Sendable {
+    
+    func applyTool(name: String, argsJson: String)  -> String
+    
+}
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceCoachHost {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // This creates 1-element array, since this seems to be the only way to construct a const
+    // pointer that we can pass to the Rust code.
+    static let vtable: [UniffiVTableCallbackInterfaceCoachHost] = [UniffiVTableCallbackInterfaceCoachHost(
+        applyTool: { (
+            uniffiHandle: UInt64,
+            name: RustBuffer,
+            argsJson: RustBuffer,
+            uniffiOutReturn: UnsafeMutablePointer<RustBuffer>,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> String in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceCoachHost.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.applyTool(
+                     name: try FfiConverterString.lift(name),
+                     argsJson: try FfiConverterString.lift(argsJson)
+                )
+            }
+
+            
+            let writeReturn = { uniffiOutReturn.pointee = FfiConverterString.lower($0) }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            let result = try? FfiConverterCallbackInterfaceCoachHost.handleMap.remove(handle: uniffiHandle)
+            if result == nil {
+                print("Uniffi callback interface CoachHost: handle missing in uniffiFree")
+            }
+        }
+    )]
+}
+
+private func uniffiCallbackInitCoachHost() {
+    uniffi_workout_core_fn_init_callback_vtable_coachhost(UniffiCallbackInterfaceCoachHost.vtable)
+}
+
+// FfiConverter protocol for callback interfaces
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterCallbackInterfaceCoachHost {
+    fileprivate static let handleMap = UniffiHandleMap<CoachHost>()
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+extension FfiConverterCallbackInterfaceCoachHost : FfiConverter {
+    typealias SwiftType = CoachHost
+    typealias FfiType = UInt64
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lift(_ handle: UInt64) throws -> SwiftType {
+        try handleMap.get(handle: handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lower(_ v: SwiftType) -> UInt64 {
+        return handleMap.insert(obj: v)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func write(_ v: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(v))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceCoachHost_lift(_ handle: UInt64) throws -> CoachHost {
+    return try FfiConverterCallbackInterfaceCoachHost.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceCoachHost_lower(_ v: CoachHost) -> UInt64 {
+    return FfiConverterCallbackInterfaceCoachHost.lower(v)
+}
+
+
+
+
+/**
+ * Streaming sink the Swift app implements to receive coach turn events.
+ * Every method is called from the engine's background tokio runtime, never
+ * from the thread that called `send_message`.
+ */
+public protocol CoachSink: AnyObject, Sendable {
+    
+    /**
+     * A chunk of assistant text as it streams in. Deltas within one turn
+     * concatenate to the final `on_completed` text.
+     */
+    func onTextDelta(delta: String) 
+    
+    /**
+     * The model invoked a tool. `args_json` is the raw JSON argument
+     * object. Fired for UI display; the tool call is executed against
+     * `CoachHost` independently of this notification.
+     */
+    func onToolCall(name: String, argsJson: String) 
+    
+    /**
+     * The turn finished normally. `full_text` is the concatenated assistant
+     * text of the final turn (a turn that ends purely on tool calls with no
+     * closing prose yields an empty string).
+     */
+    func onCompleted(fullText: String) 
+    
+    /**
+     * The turn failed. `message` is safe to show to the user — it never
+     * contains API keys or other `ProviderConfig` contents.
+     */
+    func onError(message: String) 
+    
+}
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceCoachSink {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // This creates 1-element array, since this seems to be the only way to construct a const
+    // pointer that we can pass to the Rust code.
+    static let vtable: [UniffiVTableCallbackInterfaceCoachSink] = [UniffiVTableCallbackInterfaceCoachSink(
+        onTextDelta: { (
+            uniffiHandle: UInt64,
+            delta: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceCoachSink.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onTextDelta(
+                     delta: try FfiConverterString.lift(delta)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        onToolCall: { (
+            uniffiHandle: UInt64,
+            name: RustBuffer,
+            argsJson: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceCoachSink.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onToolCall(
+                     name: try FfiConverterString.lift(name),
+                     argsJson: try FfiConverterString.lift(argsJson)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        onCompleted: { (
+            uniffiHandle: UInt64,
+            fullText: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceCoachSink.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onCompleted(
+                     fullText: try FfiConverterString.lift(fullText)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        onError: { (
+            uniffiHandle: UInt64,
+            message: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceCoachSink.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onError(
+                     message: try FfiConverterString.lift(message)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            let result = try? FfiConverterCallbackInterfaceCoachSink.handleMap.remove(handle: uniffiHandle)
+            if result == nil {
+                print("Uniffi callback interface CoachSink: handle missing in uniffiFree")
+            }
+        }
+    )]
+}
+
+private func uniffiCallbackInitCoachSink() {
+    uniffi_workout_core_fn_init_callback_vtable_coachsink(UniffiCallbackInterfaceCoachSink.vtable)
+}
+
+// FfiConverter protocol for callback interfaces
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterCallbackInterfaceCoachSink {
+    fileprivate static let handleMap = UniffiHandleMap<CoachSink>()
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+extension FfiConverterCallbackInterfaceCoachSink : FfiConverter {
+    typealias SwiftType = CoachSink
+    typealias FfiType = UInt64
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lift(_ handle: UInt64) throws -> SwiftType {
+        try handleMap.get(handle: handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lower(_ v: SwiftType) -> UInt64 {
+        return handleMap.insert(obj: v)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func write(_ v: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(v))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceCoachSink_lift(_ handle: UInt64) throws -> CoachSink {
+    return try FfiConverterCallbackInterfaceCoachSink.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceCoachSink_lower(_ v: CoachSink) -> UInt64 {
+    return FfiConverterCallbackInterfaceCoachSink.lower(v)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
+    typealias SwiftType = String?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterString.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterString.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
 /**
  * Returns this crate's own version string (from `Cargo.toml` at compile
  * time), so the Swift shell can prove it is actually calling into the
@@ -608,6 +1245,16 @@ public func FfiConverterTypeWorkoutCore_lower(_ value: WorkoutCore) -> UnsafeMut
 public func coreVersion() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_workout_core_fn_func_core_version($0
+    )
+})
+}
+/**
+ * Exposes [`DEFAULT_COACH_SYSTEM_PROMPT`] to Swift (UniFFI proc-macro export
+ * does not carry plain `const` items across the FFI boundary).
+ */
+public func defaultCoachSystemPrompt() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_workout_core_fn_func_default_coach_system_prompt($0
     )
 })
 }
@@ -630,16 +1277,45 @@ private let initializationResult: InitializationResult = {
     if (uniffi_workout_core_checksum_func_core_version() != 53660) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_workout_core_checksum_func_default_coach_system_prompt() != 14421) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_workout_core_checksum_method_coachengine_configure_coach() != 15395) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_workout_core_checksum_method_coachengine_send_message() != 22846) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_workout_core_checksum_method_workoutcore_echo() != 35362) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_workout_core_checksum_method_workoutcore_greeting() != 28831) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_workout_core_checksum_constructor_coachengine_new() != 43923) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_workout_core_checksum_constructor_workoutcore_new() != 54817) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_workout_core_checksum_method_coachhost_apply_tool() != 64476) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_workout_core_checksum_method_coachsink_on_text_delta() != 12847) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_workout_core_checksum_method_coachsink_on_tool_call() != 27359) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_workout_core_checksum_method_coachsink_on_completed() != 10520) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_workout_core_checksum_method_coachsink_on_error() != 35154) {
+        return InitializationResult.apiChecksumMismatch
+    }
 
+    uniffiCallbackInitCoachHost()
+    uniffiCallbackInitCoachSink()
     return InitializationResult.ok
 }()
 
