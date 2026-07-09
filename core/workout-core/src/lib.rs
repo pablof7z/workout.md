@@ -2,11 +2,14 @@
 //! through a UniFFI facade.
 //!
 //! Alongside the minimal `WorkoutCore` proof-of-pipeline object, this crate
-//! now carries the LLM coach engine (see [`coach`]) built on rig.rs: provider
-//! configuration, a streaming turn loop, and the coach tool set. Nostr
-//! integration is still a follow-up.
+//! carries the LLM coach engine (see [`coach`]) built on rig.rs: provider
+//! configuration, a streaming turn loop, and the coach tool set; and the
+//! Nostr/NIP-29 fabric module (see [`nostr`]) that lets the coach join the
+//! user's tenex-edge fabric and exchange context with their other agents
+//! over kind:9 chat messages.
 
 pub mod coach;
+pub mod nostr;
 
 uniffi::setup_scaffolding!();
 

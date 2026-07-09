@@ -406,6 +406,22 @@ private let UNIFFI_CALLBACK_UNEXPECTED_ERROR: Int32 = 2
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
+    typealias FfiType = UInt64
+    typealias SwiftType = UInt64
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt64 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterString: FfiConverter {
     typealias SwiftType = String
     typealias FfiType = RustBuffer
@@ -627,6 +643,358 @@ public func FfiConverterTypeCoachEngine_lower(_ value: CoachEngine) -> UnsafeMut
 
 
 /**
+ * The Nostr/NIP-29 fabric engine. One instance owns a dedicated background
+ * tokio runtime, mirroring [`crate::coach::CoachEngine`], so a live
+ * subscription's inbound-event loop never blocks the Swift caller's thread.
+ */
+public protocol NostrCoachProtocol: AnyObject, Sendable {
+    
+    /**
+     * Adds `pubkey` as a plain member of `channel` (kind:9000 put-user) —
+     * required before that identity may publish kind:9 into a `closed`
+     * group. Returns the published event id (hex).
+     */
+    func addMember(channel: String, pubkey: String) throws  -> String
+    
+    /**
+     * Configure (or reconfigure) the relay set, optional profile indexer
+     * relay, and NIP-29 channel used by every publish/subscribe call below.
+     * Safe to call again mid-lifetime; invalidates any cached connection so
+     * the next network call reconnects under the new configuration.
+     */
+    func configure(relays: [String], indexerRelay: String?, channel: String) 
+    
+    /**
+     * Creates a throwaway NIP-29 group at the configured channel id
+     * (kind:9007) and immediately locks it `closed`+`public` (kind:9002),
+     * so the configured identity becomes its sole admin. Useful for tests
+     * and for a coach that wants to own a private channel of its own.
+     * Returns the lock-closed event's id (hex).
+     */
+    func createGroup(channel: String, name: String) throws  -> String
+    
+    /**
+     * The current identity's `npub`, or `None` if no identity is set yet.
+     */
+    func currentNpub()  -> String?
+    
+    /**
+     * Exports the current identity's `nsec1...` secret key, e.g. for the
+     * Swift Keychain layer to persist across launches. `None` until an
+     * identity has been generated or imported.
+     */
+    func exportNsec()  -> String?
+    
+    /**
+     * Generates a fresh secp256k1 identity, installs it as the signer for
+     * every subsequent call, and returns its `npub`. Invalidates any cached
+     * relay connection (the next network call reconnects, authenticating as
+     * the new identity). Persisting the corresponding nsec
+     * ([`NostrCoach::export_nsec`]) to the Keychain is the Swift shell's job.
+     */
+    func generateIdentity()  -> String
+    
+    /**
+     * Imports an existing identity from an `nsec1...` (bech32) or raw hex
+     * secret key string, installing it as the signer for every subsequent
+     * call. Invalidates any cached relay connection.
+     */
+    func importNsec(nsec: String) throws 
+    
+    /**
+     * Publishes a kind:9 chat message (`["h", channel]`, optional `["e",
+     * reply_to]` / `["p", mention_pubkey]`) to the main relay set only.
+     * Returns the published event id (hex) once at least one relay has
+     * ack'd it.
+     */
+    func publishMessage(body: String, replyTo: String?, mentionPubkey: String?) throws  -> String
+    
+    /**
+     * Publishes a kind:0 profile (`{"name": ..}`, optional `about`/
+     * `picture`) to both the main relay set and the configured profile
+     * indexer (if any) — per the protocol, the indexer relay accepts
+     * kind:0 but rejects NIP-29 kinds, so it is targeted only here, never
+     * for chat/group events. Returns the published event id (hex) once at
+     * least one relay has ack'd it (NIP-01 `OK,true`).
+     */
+    func publishProfile(name: String, about: String?, picture: String?) throws  -> String
+    
+    /**
+     * Subscribes to kind:9 (+30315/30555/30023) for `#h = channel` and
+     * pushes every inbound kind:9 chat message to `sink`, detached on this
+     * engine's background runtime. Returns immediately; `sink.on_error` is
+     * called (synchronously, before returning) if the coach isn't
+     * configured yet, or (asynchronously, from the background runtime) if
+     * the subscribe call itself fails.
+     */
+    func startSubscription(sink: NostrSink) 
+    
+}
+/**
+ * The Nostr/NIP-29 fabric engine. One instance owns a dedicated background
+ * tokio runtime, mirroring [`crate::coach::CoachEngine`], so a live
+ * subscription's inbound-event loop never blocks the Swift caller's thread.
+ */
+open class NostrCoach: NostrCoachProtocol, @unchecked Sendable {
+    fileprivate let pointer: UnsafeMutableRawPointer!
+
+    /// Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoPointer {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
+        self.pointer = pointer
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noPointer: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing [Pointer] the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noPointer: NoPointer) {
+        self.pointer = nil
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiClonePointer() -> UnsafeMutableRawPointer {
+        return try! rustCall { uniffi_workout_core_fn_clone_nostrcoach(self.pointer, $0) }
+    }
+public convenience init() {
+    let pointer =
+        try! rustCall() {
+    uniffi_workout_core_fn_constructor_nostrcoach_new($0
+    )
+}
+    self.init(unsafeFromRawPointer: pointer)
+}
+
+    deinit {
+        guard let pointer = pointer else {
+            return
+        }
+
+        try! rustCall { uniffi_workout_core_fn_free_nostrcoach(pointer, $0) }
+    }
+
+    
+
+    
+    /**
+     * Adds `pubkey` as a plain member of `channel` (kind:9000 put-user) —
+     * required before that identity may publish kind:9 into a `closed`
+     * group. Returns the published event id (hex).
+     */
+open func addMember(channel: String, pubkey: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeNostrError_lift) {
+    uniffi_workout_core_fn_method_nostrcoach_add_member(self.uniffiClonePointer(),
+        FfiConverterString.lower(channel),
+        FfiConverterString.lower(pubkey),$0
+    )
+})
+}
+    
+    /**
+     * Configure (or reconfigure) the relay set, optional profile indexer
+     * relay, and NIP-29 channel used by every publish/subscribe call below.
+     * Safe to call again mid-lifetime; invalidates any cached connection so
+     * the next network call reconnects under the new configuration.
+     */
+open func configure(relays: [String], indexerRelay: String?, channel: String)  {try! rustCall() {
+    uniffi_workout_core_fn_method_nostrcoach_configure(self.uniffiClonePointer(),
+        FfiConverterSequenceString.lower(relays),
+        FfiConverterOptionString.lower(indexerRelay),
+        FfiConverterString.lower(channel),$0
+    )
+}
+}
+    
+    /**
+     * Creates a throwaway NIP-29 group at the configured channel id
+     * (kind:9007) and immediately locks it `closed`+`public` (kind:9002),
+     * so the configured identity becomes its sole admin. Useful for tests
+     * and for a coach that wants to own a private channel of its own.
+     * Returns the lock-closed event's id (hex).
+     */
+open func createGroup(channel: String, name: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeNostrError_lift) {
+    uniffi_workout_core_fn_method_nostrcoach_create_group(self.uniffiClonePointer(),
+        FfiConverterString.lower(channel),
+        FfiConverterString.lower(name),$0
+    )
+})
+}
+    
+    /**
+     * The current identity's `npub`, or `None` if no identity is set yet.
+     */
+open func currentNpub() -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_workout_core_fn_method_nostrcoach_current_npub(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Exports the current identity's `nsec1...` secret key, e.g. for the
+     * Swift Keychain layer to persist across launches. `None` until an
+     * identity has been generated or imported.
+     */
+open func exportNsec() -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_workout_core_fn_method_nostrcoach_export_nsec(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Generates a fresh secp256k1 identity, installs it as the signer for
+     * every subsequent call, and returns its `npub`. Invalidates any cached
+     * relay connection (the next network call reconnects, authenticating as
+     * the new identity). Persisting the corresponding nsec
+     * ([`NostrCoach::export_nsec`]) to the Keychain is the Swift shell's job.
+     */
+open func generateIdentity() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_workout_core_fn_method_nostrcoach_generate_identity(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Imports an existing identity from an `nsec1...` (bech32) or raw hex
+     * secret key string, installing it as the signer for every subsequent
+     * call. Invalidates any cached relay connection.
+     */
+open func importNsec(nsec: String)throws   {try rustCallWithError(FfiConverterTypeNostrError_lift) {
+    uniffi_workout_core_fn_method_nostrcoach_import_nsec(self.uniffiClonePointer(),
+        FfiConverterString.lower(nsec),$0
+    )
+}
+}
+    
+    /**
+     * Publishes a kind:9 chat message (`["h", channel]`, optional `["e",
+     * reply_to]` / `["p", mention_pubkey]`) to the main relay set only.
+     * Returns the published event id (hex) once at least one relay has
+     * ack'd it.
+     */
+open func publishMessage(body: String, replyTo: String?, mentionPubkey: String?)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeNostrError_lift) {
+    uniffi_workout_core_fn_method_nostrcoach_publish_message(self.uniffiClonePointer(),
+        FfiConverterString.lower(body),
+        FfiConverterOptionString.lower(replyTo),
+        FfiConverterOptionString.lower(mentionPubkey),$0
+    )
+})
+}
+    
+    /**
+     * Publishes a kind:0 profile (`{"name": ..}`, optional `about`/
+     * `picture`) to both the main relay set and the configured profile
+     * indexer (if any) — per the protocol, the indexer relay accepts
+     * kind:0 but rejects NIP-29 kinds, so it is targeted only here, never
+     * for chat/group events. Returns the published event id (hex) once at
+     * least one relay has ack'd it (NIP-01 `OK,true`).
+     */
+open func publishProfile(name: String, about: String?, picture: String?)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeNostrError_lift) {
+    uniffi_workout_core_fn_method_nostrcoach_publish_profile(self.uniffiClonePointer(),
+        FfiConverterString.lower(name),
+        FfiConverterOptionString.lower(about),
+        FfiConverterOptionString.lower(picture),$0
+    )
+})
+}
+    
+    /**
+     * Subscribes to kind:9 (+30315/30555/30023) for `#h = channel` and
+     * pushes every inbound kind:9 chat message to `sink`, detached on this
+     * engine's background runtime. Returns immediately; `sink.on_error` is
+     * called (synchronously, before returning) if the coach isn't
+     * configured yet, or (asynchronously, from the background runtime) if
+     * the subscribe call itself fails.
+     */
+open func startSubscription(sink: NostrSink)  {try! rustCall() {
+    uniffi_workout_core_fn_method_nostrcoach_start_subscription(self.uniffiClonePointer(),
+        FfiConverterCallbackInterfaceNostrSink_lower(sink),$0
+    )
+}
+}
+    
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNostrCoach: FfiConverter {
+
+    typealias FfiType = UnsafeMutableRawPointer
+    typealias SwiftType = NostrCoach
+
+    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> NostrCoach {
+        return NostrCoach(unsafeFromRawPointer: pointer)
+    }
+
+    public static func lower(_ value: NostrCoach) -> UnsafeMutableRawPointer {
+        return value.uniffiClonePointer()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NostrCoach {
+        let v: UInt64 = try readInt(&buf)
+        // The Rust code won't compile if a pointer won't fit in a UInt64.
+        // We have to go via `UInt` because that's the thing that's the size of a pointer.
+        let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: v))
+        if (ptr == nil) {
+            throw UniffiInternalError.unexpectedNullPointer
+        }
+        return try lift(ptr!)
+    }
+
+    public static func write(_ value: NostrCoach, into buf: inout [UInt8]) {
+        // This fiddling is because `Int` is the thing that's the same size as a pointer.
+        // The Rust code won't compile if a pointer won't fit in a `UInt64`.
+        writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNostrCoach_lift(_ pointer: UnsafeMutableRawPointer) throws -> NostrCoach {
+    return try FfiConverterTypeNostrCoach.lift(pointer)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNostrCoach_lower(_ value: NostrCoach) -> UnsafeMutableRawPointer {
+    return FfiConverterTypeNostrCoach.lower(value)
+}
+
+
+
+
+
+
+/**
  * Minimal UniFFI object proving the facade can hand a live Rust-owned
  * handle across the FFI boundary and call methods on it.
  */
@@ -783,6 +1151,120 @@ public func FfiConverterTypeWorkoutCore_lift(_ pointer: UnsafeMutableRawPointer)
 public func FfiConverterTypeWorkoutCore_lower(_ value: WorkoutCore) -> UnsafeMutableRawPointer {
     return FfiConverterTypeWorkoutCore.lower(value)
 }
+
+
+
+
+/**
+ * Error surface for every fallible [`NostrCoach`] operation. Every variant
+ * carries only a `String` so this crosses the UniFFI boundary directly
+ * (no `flat_error` indirection needed).
+ */
+public enum NostrError: Swift.Error {
+
+    
+    
+    /**
+     * `import_nsec` was given a string that isn't a valid hex or bech32
+     * (`nsec1...`) secp256k1 secret key.
+     */
+    case InvalidNsec(String
+    )
+    /**
+     * A publish/subscribe/group call was made before an identity
+     * (`generate_identity`/`import_nsec`) and/or `configure` had been set.
+     */
+    case NotConfigured(String
+    )
+    /**
+     * The relay connection, publish, or fetch itself failed — includes the
+     * NIP-01 `OK,false,<reason>` case (e.g. a closed group rejecting a
+     * non-member's kind:9, or a relay's AUTH-required rejection).
+     */
+    case Relay(String
+    )
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNostrError: FfiConverterRustBuffer {
+    typealias SwiftType = NostrError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NostrError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        
+
+        
+        case 1: return .InvalidNsec(
+            try FfiConverterString.read(from: &buf)
+            )
+        case 2: return .NotConfigured(
+            try FfiConverterString.read(from: &buf)
+            )
+        case 3: return .Relay(
+            try FfiConverterString.read(from: &buf)
+            )
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: NostrError, into buf: inout [UInt8]) {
+        switch value {
+
+        
+
+        
+        
+        case let .InvalidNsec(v1):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(v1, into: &buf)
+            
+        
+        case let .NotConfigured(v1):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(v1, into: &buf)
+            
+        
+        case let .Relay(v1):
+            writeInt(&buf, Int32(3))
+            FfiConverterString.write(v1, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNostrError_lift(_ buf: RustBuffer) throws -> NostrError {
+    return try FfiConverterTypeNostrError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNostrError_lower(_ value: NostrError) -> RustBuffer {
+    return FfiConverterTypeNostrError.lower(value)
+}
+
+
+extension NostrError: Equatable, Hashable {}
+
+
+
+
+extension NostrError: Foundation.LocalizedError {
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+}
+
 
 
 
@@ -1214,6 +1696,170 @@ public func FfiConverterCallbackInterfaceCoachSink_lower(_ v: CoachSink) -> UInt
     return FfiConverterCallbackInterfaceCoachSink.lower(v)
 }
 
+
+
+
+/**
+ * Streaming sink the Swift app implements to receive inbound fabric
+ * messages. Every method is called from [`NostrCoach`]'s background tokio
+ * runtime, never from the thread that called `start_subscription`.
+ */
+public protocol NostrSink: AnyObject, Sendable {
+    
+    /**
+     * A kind:9 chat message arrived for the configured channel (optionally
+     * further scoped to messages mentioning this identity's pubkey — see
+     * [`NostrCoach::start_subscription`]).
+     */
+    func onMessage(id: String, authorPubkey: String, body: String, createdAt: UInt64) 
+    
+    /**
+     * The subscription (or the connection it depends on) failed. Not fatal
+     * by itself — the underlying `nostr-sdk` relay pool keeps retrying the
+     * connection on its own; this is a best-effort surfacing of what went
+     * wrong for UI/logging purposes.
+     */
+    func onError(message: String) 
+    
+}
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceNostrSink {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // This creates 1-element array, since this seems to be the only way to construct a const
+    // pointer that we can pass to the Rust code.
+    static let vtable: [UniffiVTableCallbackInterfaceNostrSink] = [UniffiVTableCallbackInterfaceNostrSink(
+        onMessage: { (
+            uniffiHandle: UInt64,
+            id: RustBuffer,
+            authorPubkey: RustBuffer,
+            body: RustBuffer,
+            createdAt: UInt64,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceNostrSink.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onMessage(
+                     id: try FfiConverterString.lift(id),
+                     authorPubkey: try FfiConverterString.lift(authorPubkey),
+                     body: try FfiConverterString.lift(body),
+                     createdAt: try FfiConverterUInt64.lift(createdAt)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        onError: { (
+            uniffiHandle: UInt64,
+            message: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceNostrSink.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onError(
+                     message: try FfiConverterString.lift(message)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            let result = try? FfiConverterCallbackInterfaceNostrSink.handleMap.remove(handle: uniffiHandle)
+            if result == nil {
+                print("Uniffi callback interface NostrSink: handle missing in uniffiFree")
+            }
+        }
+    )]
+}
+
+private func uniffiCallbackInitNostrSink() {
+    uniffi_workout_core_fn_init_callback_vtable_nostrsink(UniffiCallbackInterfaceNostrSink.vtable)
+}
+
+// FfiConverter protocol for callback interfaces
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterCallbackInterfaceNostrSink {
+    fileprivate static let handleMap = UniffiHandleMap<NostrSink>()
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+extension FfiConverterCallbackInterfaceNostrSink : FfiConverter {
+    typealias SwiftType = NostrSink
+    typealias FfiType = UInt64
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lift(_ handle: UInt64) throws -> SwiftType {
+        try handleMap.get(handle: handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lower(_ v: SwiftType) -> UInt64 {
+        return handleMap.insert(obj: v)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func write(_ v: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(v))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceNostrSink_lift(_ handle: UInt64) throws -> NostrSink {
+    return try FfiConverterCallbackInterfaceNostrSink.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceNostrSink_lower(_ v: NostrSink) -> UInt64 {
+    return FfiConverterCallbackInterfaceNostrSink.lower(v)
+}
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -1235,6 +1881,31 @@ fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
         case 1: return try FfiConverterString.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
+    typealias SwiftType = [String]
+
+    public static func write(_ value: [String], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterString.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [String]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterString.read(from: &buf))
+        }
+        return seq
     }
 }
 /**
@@ -1286,6 +1957,36 @@ private let initializationResult: InitializationResult = {
     if (uniffi_workout_core_checksum_method_coachengine_send_message() != 22846) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_workout_core_checksum_method_nostrcoach_add_member() != 15588) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_workout_core_checksum_method_nostrcoach_configure() != 20226) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_workout_core_checksum_method_nostrcoach_create_group() != 2314) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_workout_core_checksum_method_nostrcoach_current_npub() != 36779) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_workout_core_checksum_method_nostrcoach_export_nsec() != 54788) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_workout_core_checksum_method_nostrcoach_generate_identity() != 45461) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_workout_core_checksum_method_nostrcoach_import_nsec() != 29882) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_workout_core_checksum_method_nostrcoach_publish_message() != 11463) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_workout_core_checksum_method_nostrcoach_publish_profile() != 36053) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_workout_core_checksum_method_nostrcoach_start_subscription() != 15498) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_workout_core_checksum_method_workoutcore_echo() != 35362) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -1293,6 +1994,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_workout_core_checksum_constructor_coachengine_new() != 43923) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_workout_core_checksum_constructor_nostrcoach_new() != 15896) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_workout_core_checksum_constructor_workoutcore_new() != 54817) {
@@ -1313,9 +2017,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_workout_core_checksum_method_coachsink_on_error() != 35154) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_workout_core_checksum_method_nostrsink_on_message() != 15620) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_workout_core_checksum_method_nostrsink_on_error() != 52703) {
+        return InitializationResult.apiChecksumMismatch
+    }
 
     uniffiCallbackInitCoachHost()
     uniffiCallbackInitCoachSink()
+    uniffiCallbackInitNostrSink()
     return InitializationResult.ok
 }()
 

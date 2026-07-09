@@ -63,7 +63,13 @@ static INSTALL_RUSTLS_RING_PROVIDER: Once = Once::new();
 /// feature choice means rustls has no default crypto provider installed
 /// until something does so explicitly — this is that call. Idempotent and
 /// cheap; safe to call from every `CoachEngine::new()`.
-fn ensure_rustls_ring_provider() {
+///
+/// `pub(crate)` so [`crate::nostr::NostrCoach`] can reuse the exact same
+/// idempotent install rather than racing a second `Once` against this one —
+/// both crates' network stacks (reqwest/hyper-rustls here, nostr-sdk's
+/// websocket transport there) need the same process-wide provider installed
+/// before their first connection.
+pub(crate) fn ensure_rustls_ring_provider() {
     INSTALL_RUSTLS_RING_PROVIDER.call_once(|| {
         // `install_default` only fails if a (different) provider was already
         // installed, which is harmless here — either way, some provider is
