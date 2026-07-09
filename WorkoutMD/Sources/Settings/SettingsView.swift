@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UIKit
 
 /// The real Settings screen: a native grouped list (unlike Today/Runner/Coach's full-bleed
 /// no-cards surfaces — this is exactly the kind of secondary, configuration-heavy screen the design
@@ -8,6 +9,7 @@ import SwiftData
 struct SettingsView: View {
     @Environment(AppSettings.self) private var settingsEnv
     @Environment(CoachController.self) private var coach
+    @Environment(FabricController.self) private var fabric
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -16,6 +18,7 @@ struct SettingsView: View {
         NavigationStack {
             List {
                 CoachAISection(settings: settings, coach: coach)
+                FabricSection(settings: settings, fabric: fabric)
                 SyncSection(settings: settings)
                 GoalsSection(settings: settings)
                 DataSection()
@@ -185,7 +188,109 @@ private struct CoachAISection: View {
     }
 }
 
-// MARK: - Section 2: Sync (GitHub)
+// MARK: - Section 2: Coach fabric (tenex-edge)
+
+/// Joins the coach to the user's tenex-edge NIP-29 fabric: an enable toggle, relay/indexer/channel
+/// config, the coach's own npub (for the user to admin-add into their channel — see the footer), a
+/// display name/about for the kind:0 profile, a manual "Publish profile" action, a connection status
+/// indicator, and a link into the small read-only `FabricView` of recent channel traffic.
+private struct FabricSection: View {
+    @Bindable var settings: AppSettings
+    let fabric: FabricController
+
+    var body: some View {
+        Section {
+            Toggle("Enable fabric", isOn: $settings.fabricEnabled)
+                .onChange(of: settings.fabricEnabled) { _, enabled in
+                    if enabled {
+                        fabric.enable()
+                    } else {
+                        fabric.disable()
+                    }
+                }
+
+            TextField("Relay(s)", text: $settings.fabricRelay, prompt: Text("wss://nip29.f7z.io"))
+                .textContentType(.URL)
+                .keyboardType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+
+            TextField("Indexer relay", text: $settings.fabricIndexerRelay, prompt: Text("wss://purplepag.es"))
+                .textContentType(.URL)
+                .keyboardType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+
+            TextField("Channel slug", text: $settings.fabricChannel, prompt: Text("e.g. pablo-training"))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+
+            TextField("Coach display name", text: $settings.fabricDisplayName, prompt: Text("coach"))
+                .textInputAutocapitalization(.never)
+
+            TextField("About (optional)", text: $settings.fabricAbout)
+
+            if let npub = fabric.npub {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(npub)
+                            .font(.caption.monospaced())
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Button {
+                            UIPasteboard.general.string = npub
+                        } label: {
+                            Image(systemName: "doc.on.doc")
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("Copy npub")
+                    }
+                    Text("Add me to your channel: `tenex-edge channel add \(npub) \(settings.fabricChannel)`")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Text("Enable the fabric to generate the coach's identity.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            LabeledContent("Status", value: fabric.status.label)
+            if let lastPublishError = fabric.lastPublishError {
+                Text(lastPublishError)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+
+            Button {
+                fabric.publishProfile()
+            } label: {
+                Label("Publish profile", systemImage: "person.crop.circle.badge.checkmark")
+            }
+            .disabled(!settings.fabricEnabled)
+
+            NavigationLink("Recent fabric messages") {
+                FabricView(fabric: fabric)
+            }
+
+            #if DEBUG
+            Button {
+                fabric.createTestGroupForCurrentChannel()
+            } label: {
+                Label("Own this channel (debug/testing)", systemImage: "wrench.and.screwdriver")
+            }
+            .disabled(!settings.fabricEnabled || settings.fabricChannel.isEmpty)
+            #endif
+        } header: {
+            Text("Coach fabric (tenex-edge)")
+        } footer: {
+            Text("Membership is admin-granted — a closed channel lets anyone read but only members can post. Run the `tenex-edge channel add` command above (from wherever you manage your tenex-edge fabric) so the coach can actually post into your channel. The nsec lives only in the Keychain — never in Settings, UserDefaults, or logs.")
+        }
+    }
+}
+
+// MARK: - Section 3: Sync (GitHub)
 
 private struct SyncSection: View {
     @Bindable var settings: AppSettings
@@ -235,7 +340,7 @@ private struct SyncSection: View {
     }
 }
 
-// MARK: - Section 3: Goals & preferences
+// MARK: - Section 4: Goals & preferences
 
 private struct GoalsSection: View {
     @Bindable var settings: AppSettings
@@ -274,7 +379,7 @@ private struct GoalsSection: View {
     }
 }
 
-// MARK: - Section 4: Data
+// MARK: - Section 5: Data
 
 private struct DataSection: View {
     @Query(sort: \WorkoutRecord.date, order: .reverse) private var records: [WorkoutRecord]

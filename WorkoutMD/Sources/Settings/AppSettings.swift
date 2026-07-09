@@ -93,6 +93,46 @@ final class AppSettings {
         didSet { defaults.set(githubRepoName, forKey: Keys.githubRepoName) }
     }
 
+    // MARK: Coach fabric (tenex-edge NIP-29)
+
+    /// Whether the coach should join the user's tenex-edge fabric at all — gates both outbound
+    /// posting (session summaries, notable plan changes) and the inbound subscription. The nsec
+    /// itself lives in the Keychain (`FabricSecrets`), never here.
+    var fabricEnabled: Bool {
+        didSet { defaults.set(fabricEnabled, forKey: Keys.fabricEnabled) }
+    }
+    /// Comma/newline-separated relay URL(s) — see `fabricRelaysList` for the parsed form `configure`
+    /// actually takes.
+    var fabricRelay: String {
+        didSet { defaults.set(fabricRelay, forKey: Keys.fabricRelay) }
+    }
+    /// The profile indexer relay (kind:0 only — never targeted for chat/group events). Empty means
+    /// "no indexer", passed to `configure` as `nil`.
+    var fabricIndexerRelay: String {
+        didSet { defaults.set(fabricIndexerRelay, forKey: Keys.fabricIndexerRelay) }
+    }
+    /// The NIP-29 channel id/slug the coach joins. Membership beyond read access is admin-granted —
+    /// see `FabricController`'s doc comment and the Settings footer for the `tenex-edge channel add`
+    /// hint surfaced to the user.
+    var fabricChannel: String {
+        didSet { defaults.set(fabricChannel, forKey: Keys.fabricChannel) }
+    }
+    var fabricDisplayName: String {
+        didSet { defaults.set(fabricDisplayName, forKey: Keys.fabricDisplayName) }
+    }
+    var fabricAbout: String {
+        didSet { defaults.set(fabricAbout, forKey: Keys.fabricAbout) }
+    }
+
+    /// `fabricRelay` split on commas/newlines into the `sequence<string>` `NostrCoach.configure`
+    /// expects, trimmed and with blanks dropped.
+    var fabricRelaysList: [String] {
+        fabricRelay
+            .split(whereSeparator: { $0 == "," || $0.isNewline })
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
     // MARK: Goals & preferences
 
     var primaryGoal: String {
@@ -116,6 +156,12 @@ final class AppSettings {
         static let verbosity = "coach.verbosity"
         static let systemPromptOverride = "coach.systemPromptOverride"
         static let githubRepoName = "sync.githubRepoName"
+        static let fabricEnabled = "fabric.enabled"
+        static let fabricRelay = "fabric.relay"
+        static let fabricIndexerRelay = "fabric.indexerRelay"
+        static let fabricChannel = "fabric.channel"
+        static let fabricDisplayName = "fabric.displayName"
+        static let fabricAbout = "fabric.about"
         static let primaryGoal = "prefs.primaryGoal"
         static let sessionLengthMinutes = "prefs.sessionLengthMinutes"
         static let dislikedExercises = "prefs.dislikedExercises"
@@ -137,6 +183,22 @@ final class AppSettings {
             let stored = defaults.string(forKey: Keys.githubRepoName) ?? ""
             return stored.isEmpty ? "workout-log" : stored
         }()
+
+        fabricEnabled = defaults.bool(forKey: Keys.fabricEnabled)
+        fabricRelay = {
+            let stored = defaults.string(forKey: Keys.fabricRelay) ?? ""
+            return stored.isEmpty ? "wss://nip29.f7z.io" : stored
+        }()
+        fabricIndexerRelay = {
+            let stored = defaults.string(forKey: Keys.fabricIndexerRelay) ?? ""
+            return stored.isEmpty ? "wss://purplepag.es" : stored
+        }()
+        fabricChannel = defaults.string(forKey: Keys.fabricChannel) ?? ""
+        fabricDisplayName = {
+            let stored = defaults.string(forKey: Keys.fabricDisplayName) ?? ""
+            return stored.isEmpty ? "coach" : stored
+        }()
+        fabricAbout = defaults.string(forKey: Keys.fabricAbout) ?? ""
 
         primaryGoal = defaults.string(forKey: Keys.primaryGoal) ?? "Hypertrophy"
         sessionLengthMinutes = (defaults.object(forKey: Keys.sessionLengthMinutes) as? Int) ?? 45
