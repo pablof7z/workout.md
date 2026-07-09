@@ -74,6 +74,15 @@ final class GitHubSync {
         self.defaults = defaults
     }
 
+    /// Updates which repo this instance targets for future sync calls — e.g. the user changed the
+    /// repo name field in Settings. Takes effect on the next `ensureRepo`/`commitSession`/`pull`
+    /// call; does not itself make a network call.
+    func setRepoName(_ name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != repoName else { return }
+        repoName = trimmed
+    }
+
     // MARK: - Repo lifecycle
 
     struct RepoInfo: Decodable {

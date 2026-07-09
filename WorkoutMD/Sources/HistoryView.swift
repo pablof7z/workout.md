@@ -21,7 +21,6 @@ struct HistoryView: View {
                     )
                 } else {
                     List {
-                        SyncDebugSection()
                         ForEach(records) { record in
                             NavigationLink {
                                 HistoryDetailView(record: record)
@@ -69,32 +68,6 @@ private struct HistoryRow: View {
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
-    }
-}
-
-/// Minimal, temporary debug affordance for GitHub sync — no Settings screen exists yet, so this is
-/// the one place to see sync status and trigger a pull by hand. Hidden behind nothing fancy: just a
-/// section at the top of History, gone once a real Settings screen lands.
-private struct SyncDebugSection: View {
-    @State private var manager = SyncManager.shared
-
-    var body: some View {
-        Section("GitHub Sync (debug)") {
-            LabeledContent("Status", value: manager.status.label)
-            LabeledContent("Signed in", value: manager.isAuthenticated ? "Yes" : "No token")
-            if let lastSyncedAt = manager.lastSyncedAt {
-                LabeledContent("Last synced", value: lastSyncedAt.formatted(date: .omitted, time: .shortened))
-            }
-            if manager.pendingCommitCount > 0 {
-                LabeledContent("Pending commits", value: "\(manager.pendingCommitCount)")
-            }
-            Button {
-                Task { await manager.pullNow() }
-            } label: {
-                Label("Sync now", systemImage: "arrow.triangle.2.circlepath")
-            }
-            .disabled(!manager.isAuthenticated)
-        }
     }
 }
 

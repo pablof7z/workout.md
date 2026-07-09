@@ -7,6 +7,7 @@ struct TodayView: View {
     var onStart: () -> Void
 
     @State private var showingHistory = false
+    @State private var showingSettings = false
 
     var body: some View {
         ZStack {
@@ -22,6 +23,7 @@ struct TodayView: View {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
                     Spacer()
+                    SettingsButton { showingSettings = true }
                     HistoryButton { showingHistory = true }
                 }
 
@@ -78,6 +80,9 @@ struct TodayView: View {
         .sheet(isPresented: $showingHistory) {
             HistoryView()
         }
+        .sheet(isPresented: $showingSettings) {
+            SettingsView()
+        }
     }
 }
 
@@ -96,5 +101,23 @@ private struct HistoryButton: View {
         .glassEffect(.regular.interactive(), in: .circle)
         .accessibilityLabel("History")
         .accessibilityHint("View past workout sessions")
+    }
+}
+
+/// Small floating glass icon button that opens Settings (coach provider/model, GitHub sync, goals).
+private struct SettingsButton: View {
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "gearshape")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.9))
+                .frame(width: 40, height: 40)
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: .circle)
+        .accessibilityLabel("Settings")
+        .accessibilityHint("Configure the coach and sync")
     }
 }
