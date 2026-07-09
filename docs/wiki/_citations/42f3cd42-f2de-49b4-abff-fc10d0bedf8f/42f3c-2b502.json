@@ -1,0 +1,6 @@
+{
+  "id": "42f3c-2b502",
+  "ts": "2026-07-09T21:12:54Z",
+  "session": "42f3cd42-f2de-49b4-abff-fc10d0bedf8f",
+  "text": "Also, the reps number and - + buttons should be bigger [...] - **Bigger stepper** — larger bold reps number and ~52pt +/− glass buttons (rep-based sets only; hidden on timed sets). [...] ## 4. Bigger reps stepper\n- **ControlsView.swift** — `RepsNudgeRow` rebuilt: reps value is now `.system(size: 34, weight: .bold, design: .rounded)` with a numeric-text transition, flanked by two 52pt circular glass `StepperCircle` buttons (20pt bold glyphs) wrapped in a `GlassEffectContainer`. It stays on rep-based sets only (still gated by `if case .reps`), so timed sets show the timer instead."
+}
