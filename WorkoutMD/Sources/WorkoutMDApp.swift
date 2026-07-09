@@ -24,12 +24,24 @@ struct WorkoutMDApp: App {
         return container
     }()
 
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some Scene {
         WindowGroup {
             RootView()
                 .preferredColorScheme(.dark)
         }
         .modelContainer(container)
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .active:
+                SyncManager.shared.appDidBecomeActive()
+            case .background:
+                SyncManager.shared.appDidEnterBackground()
+            default:
+                break
+            }
+        }
     }
 }
 
@@ -68,10 +80,14 @@ private struct RootView: View {
     }
 
     /// Bridges the finished `WorkoutSession` into durable SwiftData history. The live session object
-    /// itself is left untouched — this only reads it to build an independent snapshot.
+    /// itself is left untouched — this only reads it to build an independent snapshot. Also kicks
+    /// off a GitHub commit of the session's Markdown (no-op if no token is stored yet).
     private func saveToHistory() {
         let record = session.makeRecord(workoutName: MockWorkout.name, goal: MockWorkout.goal)
         modelContext.insert(record)
         try? modelContext.save()
+        Task {
+            await SyncManager.shared.commitSession(record)
+        }
     }
 }
