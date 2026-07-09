@@ -103,6 +103,7 @@ targets:
         CODE_SIGNING_ALLOWED: YES
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 456SHKPP26
+        CODE_SIGN_ENTITLEMENTS: WorkoutMD.entitlements
         SWIFT_OBJC_BRIDGING_HEADER: Sources/Bridge/WorkoutCore.h
         "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]": "$(inherited) $(SRCROOT)/Build/Rust/$(SDK_NAME)"
         "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]": "$(inherited) $(SRCROOT)/Build/Rust/$(SDK_NAME)"

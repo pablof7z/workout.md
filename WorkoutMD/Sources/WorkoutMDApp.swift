@@ -13,7 +13,14 @@ struct WorkoutMDApp: App {
             SetRecord.self,
             CoachNoteRecord.self
         ])
-        let configuration = ModelConfiguration(schema: schema)
+        // Explicitly opt this local SwiftData store out of SwiftData's automatic CloudKit mirroring.
+        // Without this, `ModelConfiguration`'s default `cloudKitDatabase: .automatic` detects the
+        // app's iCloud container entitlement (added for `ICloudSync`'s Documents mirror below) and
+        // tries to stand up an `NSPersistentCloudKitContainer` — which then fails fast at launch
+        // because this schema uses unique constraints and non-optional attributes CloudKit doesn't
+        // support. `ICloudSync` mirrors the rendered Markdown by hand instead, so SwiftData itself
+        // has no business talking to CloudKit at all.
+        let configuration = ModelConfiguration(schema: schema, cloudKitDatabase: .none)
         let container: ModelContainer
         do {
             container = try ModelContainer(for: schema, configurations: [configuration])

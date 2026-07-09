@@ -93,6 +93,16 @@ final class AppSettings {
         didSet { defaults.set(githubRepoName, forKey: Keys.githubRepoName) }
     }
 
+    // MARK: Sync (iCloud)
+
+    /// Whether the app mirrors session Markdown into the iCloud ubiquity container (`ICloudSync`).
+    /// Off by default — opt-in, same as GitHub. Fully independent of `githubRepoName`/GitHub auth:
+    /// both are separate mirrors of the same rendered Markdown and can be toggled independently
+    /// without affecting each other (see `SyncManager.commitSession`).
+    var icloudSyncEnabled: Bool {
+        didSet { defaults.set(icloudSyncEnabled, forKey: Keys.icloudSyncEnabled) }
+    }
+
     // MARK: Coach fabric (tenex-edge NIP-29)
 
     /// Whether the coach should join the user's tenex-edge fabric at all — gates both outbound
@@ -156,6 +166,7 @@ final class AppSettings {
         static let verbosity = "coach.verbosity"
         static let systemPromptOverride = "coach.systemPromptOverride"
         static let githubRepoName = "sync.githubRepoName"
+        static let icloudSyncEnabled = "sync.icloudSyncEnabled"
         static let fabricEnabled = "fabric.enabled"
         static let fabricRelay = "fabric.relay"
         static let fabricIndexerRelay = "fabric.indexerRelay"
@@ -183,6 +194,7 @@ final class AppSettings {
             let stored = defaults.string(forKey: Keys.githubRepoName) ?? ""
             return stored.isEmpty ? "workout-log" : stored
         }()
+        icloudSyncEnabled = defaults.bool(forKey: Keys.icloudSyncEnabled)
 
         fabricEnabled = defaults.bool(forKey: Keys.fabricEnabled)
         fabricRelay = {
