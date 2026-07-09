@@ -1,0 +1,30 @@
+[package]
+name = "workout-core"
+version = "0.1.0"
+edition = "2021"
+description = "Workout.md Rust core — UniFFI facade exposed to the native iOS shell."
+publish = false
+
+[lib]
+name = "workout_core"
+# `staticlib` so the iOS shell can link `-lworkout_core`; `cdylib` so
+# `uniffi-bindgen generate --library` can introspect the compiled interface;
+# `rlib` so Rust-side consumers (tests, future desktop/CLI hosts) reach the
+# crate through normal Rust paths.
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+uniffi = { version = "0.29" }
+
+[features]
+# `bindgen` gates this crate's own `uniffi-bindgen` binary behind an opt-in
+# feature so a normal `cargo build`/`cargo check` never links the UniFFI CLI.
+# There is no shared/global `uniffi-bindgen` guaranteed to match this crate's
+# `uniffi` version, so the crate carries its own bindgen entry point built
+# from the exact same dependency graph as the library it introspects.
+bindgen = ["uniffi/cli"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["bindgen"]

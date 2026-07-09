@@ -10,6 +10,83 @@ targets:
     platform: iOS
     sources:
       - path: Sources
+    preBuildScripts:
+      - name: Build Rust core (workout-core)
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+
+          REPO_ROOT="${SRCROOT}/.."
+          CORE_DIR="${REPO_ROOT}/core/workout-core"
+          CARGO_BIN="${CARGO:-$HOME/.cargo/bin/cargo}"
+          LIB_NAME="libworkout_core.a"
+          OUT_DIR="${SRCROOT}/Build/Rust/${SDK_NAME}"
+          GENERATED_DIR="${SRCROOT}/Sources/Bridge/Generated"
+
+          # `cargo`'s own `cargo metadata` (invoked internally by the
+          # `uniffi-bindgen` binary below) resolves the manifest from the
+          # current directory, not from `--manifest-path`, so this whole
+          # script runs with its cwd inside the crate.
+          cd "$CORE_DIR"
+
+          if [[ "${CONFIGURATION:-Debug}" == "Release" ]]; then
+            CARGO_PROFILE_FLAG="--release"
+            CARGO_PROFILE_DIR="release"
+          else
+            CARGO_PROFILE_FLAG=""
+            CARGO_PROFILE_DIR="debug"
+          fi
+
+          mkdir -p "$OUT_DIR"
+
+          build_target() {
+            local target="$1"
+            "$CARGO_BIN" build $CARGO_PROFILE_FLAG --target "$target"
+          }
+
+          if [[ "$SDK_NAME" == iphoneos* ]]; then
+            build_target "aarch64-apple-ios"
+            cp "${CORE_DIR}/target/aarch64-apple-ios/${CARGO_PROFILE_DIR}/${LIB_NAME}" "${OUT_DIR}/${LIB_NAME}"
+          else
+            declare -a libs=()
+            for arch in ${ARCHS:-arm64}; do
+              case "$arch" in
+                arm64)
+                  target="aarch64-apple-ios-sim"
+                  ;;
+                x86_64)
+                  target="x86_64-apple-ios"
+                  ;;
+                *)
+                  echo "Unsupported simulator arch: $arch" >&2
+                  exit 1
+                  ;;
+              esac
+              build_target "$target"
+              libs+=("${CORE_DIR}/target/${target}/${CARGO_PROFILE_DIR}/${LIB_NAME}")
+            done
+
+            if [[ "${#libs[@]}" -eq 1 ]]; then
+              cp "${libs[0]}" "${OUT_DIR}/${LIB_NAME}"
+            else
+              lipo -create "${libs[@]}" -output "${OUT_DIR}/${LIB_NAME}"
+            fi
+          fi
+
+          # Regenerate the UniFFI Swift bindings from a host-built cdylib.
+          # The interface is target-independent, so a macOS host build is
+          # sufficient to introspect it even though the .a linked above is
+          # built for the iOS device/simulator target. This crate carries its
+          # own `uniffi-bindgen` binary (gated behind the `bindgen` feature)
+          # so the generator always matches this crate's `uniffi` version —
+          # a globally installed `uniffi-bindgen` is not guaranteed to.
+          "$CARGO_BIN" build
+          HOST_LIB="${CORE_DIR}/target/debug/libworkout_core.dylib"
+
+          mkdir -p "$GENERATED_DIR"
+          "$CARGO_BIN" run --features bindgen --bin uniffi-bindgen -- \
+            generate --library --crate workout_core --language swift \
+            --out-dir "$GENERATED_DIR" --no-format "$HOST_LIB"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.workoutmd.prototype
@@ -26,3 +103,8 @@ targets:
         CODE_SIGNING_ALLOWED: YES
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 456SHKPP26
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/Bridge/WorkoutCore.h
+        "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]": "$(inherited) $(SRCROOT)/Build/Rust/$(SDK_NAME)"
+        "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]": "$(inherited) $(SRCROOT)/Build/Rust/$(SDK_NAME)"
+        OTHER_LDFLAGS: "$(inherited) -lworkout_core"
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
