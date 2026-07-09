@@ -62,12 +62,16 @@ private struct RootView: View {
     /// screen, and Settings all share the exact same `CoachController`/`CoachEngine` instance.
     @State private var appSettings = AppSettings.shared
     @State private var coachController = CoachController()
+    /// Same singleton `CoachController` reaches for by default (`fabric: FabricController = .shared`)
+    /// so both share the one live `NostrCoach` instance/subscription.
+    @State private var fabricController = FabricController.shared
     @Environment(\.modelContext) private var modelContext
 
     var body: some View {
         content
             .environment(appSettings)
             .environment(coachController)
+            .environment(fabricController)
     }
 
     @ViewBuilder
@@ -93,7 +97,9 @@ private struct RootView: View {
 
     /// Bridges the finished `WorkoutSession` into durable SwiftData history. The live session object
     /// itself is left untouched — this only reads it to build an independent snapshot. Also kicks
-    /// off a GitHub commit of the session's Markdown (no-op if no token is stored yet).
+    /// off a GitHub commit of the session's Markdown (no-op if no token is stored yet) and, if the
+    /// fabric is enabled, posts a terse kind:9 summary to the user's tenex-edge channel (no-op if the
+    /// toggle is off).
     private func saveToHistory() {
         let record = session.makeRecord(workoutName: MockWorkout.name, goal: MockWorkout.goal)
         modelContext.insert(record)
@@ -101,5 +107,6 @@ private struct RootView: View {
         Task {
             await SyncManager.shared.commitSession(record)
         }
+        fabricController.postSessionSummary(record)
     }
 }

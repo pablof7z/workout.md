@@ -23,13 +23,19 @@ import SwiftData
 final class CoachController {
     private let engine: CoachEngine
     private let settings: AppSettings
+    /// The tenex-edge fabric — same singleton `WorkoutMDApp` injects via `.environment`, so a turn's
+    /// grounding context and any notable plan change it applies stay in sync with what `SettingsView`/
+    /// `FabricView` show. See `send` (inbound context folded into grounding) and
+    /// `WorkoutSessionCoachHost` (outbound notable-tool posts) below.
+    private let fabric: FabricController
 
     /// Whether a turn is currently streaming, for a lightweight "thinking" affordance in `CoachView`.
     private(set) var isSending = false
 
-    init(settings: AppSettings = .shared, engine: CoachEngine = CoachEngine()) {
+    init(settings: AppSettings = .shared, engine: CoachEngine = CoachEngine(), fabric: FabricController = .shared) {
         self.settings = settings
         self.engine = engine
+        self.fabric = fabric
         applySettings()
     }
 
@@ -62,7 +68,14 @@ final class CoachController {
         Self.persistNote(kind: .user, text: text, exercise: exerciseName, modelContext: modelContext)
 
         let grounding = session.coachContext(for: exerciseName)
-        let combinedUserMessage = "\(grounding)\n\nAthlete note: \(text)"
+        // Folds in recent tenex-edge fabric traffic (from the user's other agents) so the coach is
+        // aware of it — e.g. it can note "there are new messages from your assistant" and factor them
+        // in — before the athlete's own note. Empty (and a no-op `contextSnippet` call) when the
+        // fabric is disabled or nothing new has arrived.
+        let fabricContext = fabric.contextSnippet()
+        let combinedUserMessage = fabricContext.isEmpty
+            ? "\(grounding)\n\nAthlete note: \(text)"
+            : "\(grounding)\n\n\(fabricContext)\n\nAthlete note: \(text)"
 
         isSending = true
         session.beginStreamingReply(for: exerciseName)
@@ -81,7 +94,7 @@ final class CoachController {
             }
         )
 
-        let host = WorkoutSessionCoachHost(session: session, exerciseName: exerciseName) { confirmation in
+        let host = WorkoutSessionCoachHost(session: session, exerciseName: exerciseName, fabric: fabric) { confirmation in
             Self.persistNote(kind: .diff, text: confirmation, exercise: exerciseName, modelContext: modelContext)
         }
 
@@ -181,18 +194,29 @@ private final class CoachStreamSink: CoachSink, @unchecked Sendable {
 private final class WorkoutSessionCoachHost: CoachHost, @unchecked Sendable {
     private let session: WorkoutSession
     private let exerciseName: String
+    private let fabric: FabricController
     private let onApplied: (String) -> Void
 
-    init(session: WorkoutSession, exerciseName: String, onApplied: @escaping (String) -> Void) {
+    /// Tool names whose confirmation is a genuine plan change (not just a freestanding note) — worth
+    /// a terse fabric post so the user's other agents see it land, per the product vision ("dropped
+    /// bench to 125 after back tweak"). `add_note`/`edit_plan` are left out: they're not concrete
+    /// numeric changes to the plan the fabric needs to know about turn by turn.
+    private static let notableTools: Set<String> = ["adjust_set", "skip_set", "deload_exercise"]
+
+    init(session: WorkoutSession, exerciseName: String, fabric: FabricController, onApplied: @escaping (String) -> Void) {
         self.session = session
         self.exerciseName = exerciseName
+        self.fabric = fabric
         self.onApplied = onApplied
     }
 
     func applyTool(name: String, argsJson: String) -> String {
-        DispatchQueue.main.sync { [session, exerciseName, onApplied] in
+        DispatchQueue.main.sync { [session, exerciseName, fabric, onApplied] in
             let confirmation = session.applyCoachTool(name: name, argsJson: argsJson, transcriptExercise: exerciseName)
             onApplied(confirmation)
+            if Self.notableTools.contains(name) {
+                fabric.postSummary("\(exerciseName): \(confirmation)")
+            }
             return confirmation
         }
     }
