@@ -8,6 +8,12 @@ struct TodayView: View {
         ZStack {
             BackgroundView(moodKey: .bench)
                 .ignoresSafeArea()
+                .onAppear {
+                    // Proof that the WorkoutCore UniFFI object (not just the
+                    // free function) round-trips through the FFI boundary.
+                    let core = WorkoutCore()
+                    print("[workout-core] \(core.greeting()) — echo(\"ping\") = \(core.echo(message: "ping"))")
+                }
 
             VStack(alignment: .leading, spacing: 16) {
                 Spacer()
@@ -43,6 +49,21 @@ struct TodayView: View {
                 .padding(.bottom, 24)
             }
             .padding(.horizontal, 28)
+
+            // Subtle proof-of-life for the Rust core linked via UniFFI — not
+            // part of the product design, just visible confirmation that the
+            // Swift shell is actually calling into the compiled Rust core.
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    Text("core v\(coreVersion())")
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.25))
+                        .padding(.trailing, 12)
+                        .padding(.bottom, 6)
+                }
+            }
         }
     }
 }
