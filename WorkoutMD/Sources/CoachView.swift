@@ -1,15 +1,20 @@
 import SwiftUI
+import SwiftData
 
-/// The scripted mock coach, scoped to the current exercise. Full-bleed dark (same aesthetic as the
-/// runner — NOT a sheet, NOT web cards). The user types a plain-language note; a local keyword
-/// policy appends a terse, dry coach reply and applies a concrete change to the shared
-/// `WorkoutSession`, shown as a distinct applied-diff line. Those edits reflect on the runner's
-/// upcoming pages. The coach voice is dry and direct — no pep talk.
+/// The live LLM coach, scoped to the current exercise. Full-bleed dark (same aesthetic as the
+/// runner — NOT a sheet, NOT web cards). The user types a plain-language note; `CoachController`
+/// streams a real model reply (rig.rs, over UniFFI) token by token into the transcript, and any
+/// tool call the model makes applies a concrete change to the shared `WorkoutSession` — shown as a
+/// distinct applied-diff line — which reflects on the runner's upcoming pages. The coach voice is
+/// dry and direct — no pep talk (enforced by the system prompt, not by scripting here anymore).
 struct CoachView: View {
     @Environment(WorkoutSession.self) private var session
+    @Environment(CoachController.self) private var coach
+    @Environment(\.modelContext) private var modelContext
     var onBackToRunner: () -> Void
 
     @State private var draft = ""
+    @State private var showingSettings = false
     @FocusState private var inputFocused: Bool
 
     private var exerciseName: String { session.currentExerciseName ?? "This exercise" }
@@ -32,6 +37,9 @@ struct CoachView: View {
         .onChange(of: exerciseName) { _, newValue in
             session.seedTranscriptIfNeeded(for: newValue)
         }
+        .sheet(isPresented: $showingSettings) {
+            SettingsView()
+        }
     }
 
     // MARK: Header
@@ -49,6 +57,17 @@ struct CoachView: View {
             }
 
             Spacer()
+
+            Button { showingSettings = true } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .frame(width: 40, height: 40)
+            }
+            .buttonStyle(.plain)
+            .glassEffect(.regular.interactive(), in: .circle)
+            .accessibilityLabel("Coach settings")
+            .padding(.trailing, 8)
 
             Button(action: onBackToRunner) {
                 HStack(spacing: 4) {
@@ -79,6 +98,9 @@ struct CoachView: View {
                         CoachLineView(message: message)
                             .id(message.id)
                     }
+                    if isWaitingForFirstToken {
+                        ThinkingIndicator()
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 24)
@@ -89,7 +111,18 @@ struct CoachView: View {
                     withAnimation(.easeOut) { scroll.scrollTo(last.id, anchor: .bottom) }
                 }
             }
+            .onChange(of: messages.last?.text) { _, _ in
+                if let last = messages.last {
+                    scroll.scrollTo(last.id, anchor: .bottom)
+                }
+            }
         }
+    }
+
+    /// True right after a turn is sent, before the first `on_text_delta` chunk has arrived — the
+    /// streaming placeholder message exists but is still empty.
+    private var isWaitingForFirstToken: Bool {
+        coach.isSending && messages.last?.kind == .coach && (messages.last?.text.isEmpty ?? false)
     }
 
     // MARK: Deload follow-up chip
@@ -146,7 +179,7 @@ struct CoachView: View {
                 }
                 .buttonStyle(.glassProminent)
                 .tint(.indigo)
-                .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
+                .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty || coach.isSending)
                 .accessibilityLabel("Send to coach")
             }
         }
@@ -156,13 +189,31 @@ struct CoachView: View {
 
     private func send() {
         let text = draft
-        guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        guard !text.trimmingCharacters(in: .whitespaces).isEmpty, !coach.isSending else { return }
         Haptics.selection()
-        withAnimation(.snappy) {
-            session.sendCoachMessage(text)
-        }
         draft = ""
         inputFocused = false
+        let scopedExercise = exerciseName
+        withAnimation(.snappy) {
+            coach.send(userMessage: text, exerciseName: scopedExercise, session: session, modelContext: modelContext)
+        }
+    }
+}
+
+/// A terse "thinking" line shown between the turn being sent and the first streamed token —
+/// intentionally understated, matching the rest of the transcript's plain-line style.
+private struct ThinkingIndicator: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "quote.bubble")
+                .font(.footnote)
+                .foregroundStyle(.white.opacity(0.5))
+            ProgressView()
+                .controlSize(.small)
+                .tint(.white.opacity(0.6))
+            Spacer(minLength: 24)
+        }
+        .accessibilityLabel("Coach is thinking")
     }
 }
 

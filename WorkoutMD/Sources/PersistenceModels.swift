@@ -230,14 +230,25 @@ final class SetRecord {
 
 /// One line of the coach transcript for a completed workout, tagged with which exercise it was
 /// scoped to (nil for a general/session-level note).
+///
+/// `workout` is optional so the live coach can persist a turn the moment it happens — as a
+/// standalone note not yet (or never) attached to a finished `WorkoutRecord` — which is what gives
+/// `CoachController` cross-launch memory: it re-reads these by `exerciseName` to seed
+/// `send_message`'s `history_json` even before the session that produced them is saved to history.
 @Model
 final class CoachNoteRecord {
     var id: UUID
-    /// Chronological position across the whole session's transcript.
+    /// Chronological position across the whole session's transcript (only meaningful once bridged
+    /// into a `WorkoutRecord.coachNotes` — see `WorkoutSession.makeRecord`). Standalone live notes
+    /// (`workout == nil`) sort by `date` instead.
     var order: Int
     var kind: RecordCoachKind
     var text: String
     var exerciseName: String?
+    /// When this line was actually said/applied — added so the live coach can reconstruct
+    /// conversation history in chronological order across turns and app launches, independent of
+    /// whether it's yet attached to a finished `WorkoutRecord`.
+    var date: Date
 
     var workout: WorkoutRecord?
 
@@ -246,13 +257,15 @@ final class CoachNoteRecord {
         order: Int,
         kind: RecordCoachKind,
         text: String,
-        exerciseName: String? = nil
+        exerciseName: String? = nil,
+        date: Date = .now
     ) {
         self.id = id
         self.order = order
         self.kind = kind
         self.text = text
         self.exerciseName = exerciseName
+        self.date = date
     }
 }
 
@@ -358,7 +371,7 @@ extension WorkoutSession {
             case .user: kind = .user
             case .diff: kind = .diff
             }
-            return CoachNoteRecord(order: index, kind: kind, text: message.text, exerciseName: exerciseName)
+            return CoachNoteRecord(order: index, kind: kind, text: message.text, exerciseName: exerciseName, date: message.date)
         }
 
         return record

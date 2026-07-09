@@ -152,12 +152,21 @@ enum EffortScale {
 
 struct CoachMessage: Identifiable {
     enum Kind { case coach, user, diff }
-    let id = UUID()
+    let id: UUID
     let kind: Kind
-    let text: String
+    /// `var` (not `let`) so a streaming coach reply can be mutated in place by identity as
+    /// `on_text_delta` chunks arrive, rather than the transcript array replacing the whole message.
+    var text: String
     /// When the line was sent, so a full-session transcript (spanning many exercises) can be
     /// reassembled in chronological order when snapshotted to history.
-    let date: Date = .now
+    let date: Date
+
+    init(kind: Kind, text: String, id: UUID = UUID(), date: Date = .now) {
+        self.id = id
+        self.kind = kind
+        self.text = text
+        self.date = date
+    }
 }
 
 /// Summary shown on the Done screen at the end of a session.
@@ -189,6 +198,9 @@ final class WorkoutSession {
     var offerDeload: Set<String> = []
     /// Exercises marked to deload / skip upcoming sessions.
     var deloaded: Set<String> = []
+    /// The in-flight streaming coach-reply message id per exercise, while a `send_message` turn is
+    /// being streamed — see `beginStreamingReply`/`appendStreamingDelta`/`finalizeStreamingReply`.
+    private var streamingMessageID: [String: UUID] = [:]
 
     /// A snapshot of `steps` as they stood at session start, before any coach edit or reps-stepper
     /// nudge mutated a target in place. `WorkoutStep`/`SetPageInfo`/`Exercise` are all value types, so
@@ -255,33 +267,279 @@ final class WorkoutSession {
         steps[idx].page = .set(info)
     }
 
-    // MARK: Coach policy
+    // MARK: Live coach — streaming transcript
 
-    /// Runs the scripted keyword policy for a plain-language note, appending transcript lines and
-    /// applying a concrete edit to upcoming sets.
-    func sendCoachMessage(_ raw: String) {
-        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let name = currentExerciseName else { return }
+    /// Appends the athlete's own message to `exercise`'s transcript. Public entry point for
+    /// `CoachController`, which owns turn orchestration but leaves all transcript/session state in
+    /// `WorkoutSession`.
+    func appendUserMessage(_ text: String, to exercise: String) {
+        append(CoachMessage(kind: .user, text: text), to: exercise)
+    }
 
-        append(CoachMessage(kind: .user, text: text), to: name)
-        let lower = text.lowercased()
+    /// Opens an empty coach-reply placeholder that `appendStreamingDelta`/`finalizeStreamingReply`
+    /// fill in as the turn streams — the visible "live typing" effect in `CoachView`.
+    func beginStreamingReply(for exercise: String) {
+        let placeholder = CoachMessage(kind: .coach, text: "")
+        append(placeholder, to: exercise)
+        streamingMessageID[exercise] = placeholder.id
+    }
 
-        if contains(lower, ["pain", "hurt", "weird", "tweak", "back", "knee", "shoulder", "elbow"]) {
-            append(CoachMessage(kind: .coach, text: "Sharp or dull? Cut your next set to 50%."), to: name)
-            appendWeightDiff(for: name, factor: 0.5)
-            offerDeload.insert(name)
-        } else if contains(lower, ["tired", "gassed", "fatigued", "exhausted", "done"]) {
-            append(CoachMessage(kind: .coach, text: "Dropping your last set. Keep rest tight."), to: name)
-            skipLastRemainingSet(for: name)
-        } else if contains(lower, ["too easy", "easy", "light"]) {
-            append(CoachMessage(kind: .coach, text: "Adding 5 lb next set."), to: name)
-            appendWeightDelta(for: name, delta: 5)
-        } else if contains(lower, ["great", "strong", "good", "solid"]) {
-            append(CoachMessage(kind: .coach, text: "Good. Holding the plan."), to: name)
+    /// Appends one `on_text_delta` chunk to the in-flight placeholder for `exercise`, if any.
+    func appendStreamingDelta(_ delta: String, exercise: String) {
+        guard let id = streamingMessageID[exercise],
+              var list = transcripts[exercise],
+              let idx = list.firstIndex(where: { $0.id == id }) else { return }
+        list[idx].text += delta
+        transcripts[exercise] = list
+    }
+
+    /// Resolves the in-flight placeholder with the turn's authoritative `on_completed` text (which
+    /// should match the concatenated deltas, but is used verbatim rather than trusted-by-inference).
+    /// A turn that only called tools (no closing prose) yields an empty `fullText` — that placeholder
+    /// is dropped entirely rather than left as a blank line.
+    func finalizeStreamingReply(for exercise: String, fullText: String) {
+        defer { streamingMessageID[exercise] = nil }
+        guard let id = streamingMessageID[exercise],
+              var list = transcripts[exercise],
+              let idx = list.firstIndex(where: { $0.id == id }) else {
+            if !fullText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                append(CoachMessage(kind: .coach, text: fullText), to: exercise)
+            }
+            return
+        }
+        let resolved = fullText.isEmpty ? list[idx].text : fullText
+        if resolved.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            list.remove(at: idx)
         } else {
-            append(CoachMessage(kind: .coach, text: "Noted."), to: name)
+            list[idx].text = resolved
+        }
+        transcripts[exercise] = list
+    }
+
+    /// Resolves the in-flight placeholder as an error line instead (the turn's `on_error`).
+    func finalizeStreamingReply(for exercise: String, replaceWithError message: String) {
+        defer { streamingMessageID[exercise] = nil }
+        if let id = streamingMessageID[exercise],
+           var list = transcripts[exercise],
+           let idx = list.firstIndex(where: { $0.id == id }) {
+            list[idx].text = "Error: \(message)"
+            transcripts[exercise] = list
+        } else {
+            append(CoachMessage(kind: .coach, text: "Error: \(message)"), to: exercise)
         }
     }
+
+    // MARK: Live coach — grounding context for the model
+
+    /// A terse, factual summary of `exercise`'s sets — prescribed vs. actual/RPE so far, and which
+    /// remain upcoming — prefixed to every `user_message` sent to the coach engine. This is what
+    /// makes `adjust_set`/`skip_set` (which address a set by a zero-based `set_index` within the
+    /// exercise) meaningful: the model is told exactly which index is which set.
+    func coachContext(for exercise: String) -> String {
+        let indices = stepIndices(forExercise: exercise)
+        guard !indices.isEmpty else { return "Exercise: \(exercise) (not part of today's plan)." }
+
+        var lines = ["Exercise: \(exercise)"]
+        for (setIndex, stepIdx) in indices.enumerated() {
+            guard case .set(let info) = steps[stepIdx].page else { continue }
+            let prescribed = prescribedDisplay(atStepIndex: stepIdx)
+            var line = "- set_index \(setIndex): prescribed \(prescribed)"
+            if info.skipped {
+                line += " — skipped"
+            } else if let idx = currentIndex, stepIdx < idx {
+                line += " — done: \(info.exercise.target.displayString)"
+                if let r = rpe[steps[stepIdx].id] {
+                    line += ", RPE \(String(format: "%.1f", r))"
+                }
+            } else if stepIdx == currentIndex {
+                line += " — current set"
+                if let r = rpe[steps[stepIdx].id] {
+                    line += ", RPE \(String(format: "%.1f", r))"
+                }
+            } else {
+                line += " — upcoming"
+            }
+            lines.append(line)
+        }
+        if deloaded.contains(exercise) {
+            lines.append("Note: \(exercise) is already flagged for deload.")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Indices into `steps` (== indices into `prescribedSteps`, the two arrays are parallel) for
+    /// every set page belonging to `exercise`, in plan order — this is the space `set_index`
+    /// addresses.
+    private func stepIndices(forExercise name: String) -> [Int] {
+        steps.indices.filter { idx in
+            if case .set(let info) = steps[idx].page { return info.exercise.name == name }
+            return false
+        }
+    }
+
+    private func prescribedDisplay(atStepIndex idx: Int) -> String {
+        guard idx < prescribedSteps.count, case .set(let info) = prescribedSteps[idx].page else { return "—" }
+        return info.exercise.target.displayString
+    }
+
+    // MARK: Live coach — tool application (CoachHost side effects)
+
+    /// Dispatches one coach tool call (routed here from `CoachHost.applyTool` in `CoachController`)
+    /// by name, decoding `argsJson` into the shape `core/workout-core/src/coach/tools.rs` defines,
+    /// mutating `steps` (so the runner's upcoming pages reflect it immediately), appending the
+    /// applied-diff transcript line, and returning a terse confirmation the model sees as the tool's
+    /// result. `transcriptExercise` is the exercise the Coach screen is currently scoped to — the
+    /// diff line is always shown there, even if the tool targets a different named exercise.
+    func applyCoachTool(name: String, argsJson: String, transcriptExercise: String) -> String {
+        let data = Data(argsJson.utf8)
+        let decoder = JSONDecoder()
+
+        switch name {
+        case "adjust_set":
+            struct Args: Decodable { let exercise: String; let set_index: Int; let new_weight: Double?; let new_reps: Int? }
+            guard let args = try? decoder.decode(Args.self, from: data) else {
+                return malformed(name, transcriptExercise)
+            }
+            return applyAdjustSet(
+                exercise: args.exercise, setIndex: args.set_index,
+                newWeight: args.new_weight, newReps: args.new_reps,
+                transcriptExercise: transcriptExercise
+            )
+
+        case "skip_set":
+            struct Args: Decodable { let exercise: String; let set_index: Int }
+            guard let args = try? decoder.decode(Args.self, from: data) else {
+                return malformed(name, transcriptExercise)
+            }
+            return applySkipSet(exercise: args.exercise, setIndex: args.set_index, transcriptExercise: transcriptExercise)
+
+        case "deload_exercise":
+            struct Args: Decodable { let exercise: String; let weeks: Int }
+            guard let args = try? decoder.decode(Args.self, from: data) else {
+                return malformed(name, transcriptExercise)
+            }
+            return applyDeloadExercise(exercise: args.exercise, weeks: args.weeks, transcriptExercise: transcriptExercise)
+
+        case "add_note":
+            struct Args: Decodable { let scope: String; let text: String }
+            guard let args = try? decoder.decode(Args.self, from: data) else {
+                return malformed(name, transcriptExercise)
+            }
+            return applyAddNote(scope: args.scope, text: args.text, transcriptExercise: transcriptExercise)
+
+        case "edit_plan":
+            struct Args: Decodable { let instruction: String }
+            guard let args = try? decoder.decode(Args.self, from: data) else {
+                return malformed(name, transcriptExercise)
+            }
+            return applyEditPlan(instruction: args.instruction, transcriptExercise: transcriptExercise)
+
+        default:
+            let message = "Unknown tool \(name)."
+            append(CoachMessage(kind: .diff, text: message), to: transcriptExercise)
+            return message
+        }
+    }
+
+    private func malformed(_ tool: String, _ transcriptExercise: String) -> String {
+        let message = "Could not parse arguments for \(tool)."
+        append(CoachMessage(kind: .diff, text: message), to: transcriptExercise)
+        return message
+    }
+
+    /// `adjust_set` — changes an upcoming (or the current) set's weight and/or rep target in place.
+    private func applyAdjustSet(exercise: String, setIndex: Int, newWeight: Double?, newReps: Int?, transcriptExercise: String) -> String {
+        let indices = stepIndices(forExercise: exercise)
+        guard setIndex >= 0, setIndex < indices.count else {
+            let message = "No set \(setIndex) found for \(exercise)."
+            append(CoachMessage(kind: .diff, text: message), to: transcriptExercise)
+            return message
+        }
+        let stepIdx = indices[setIndex]
+        guard case .set(var info) = steps[stepIdx].page else {
+            let message = "Could not adjust \(exercise) set \(setIndex)."
+            append(CoachMessage(kind: .diff, text: message), to: transcriptExercise)
+            return message
+        }
+
+        var changes: [String] = []
+        switch info.exercise.target {
+        case .reps(let count, let weight):
+            let finalReps = newReps ?? count
+            let finalWeight = newWeight ?? weight
+            if let newWeight, newWeight != weight {
+                changes.append(weight == nil ? "set \(Int(newWeight)) lb" : "\(Int(weight!)) → \(Int(newWeight)) lb")
+            }
+            if let newReps, newReps != count {
+                changes.append("\(count) → \(newReps) reps")
+            }
+            info.exercise.target = .reps(count: finalReps, weight: finalWeight)
+        case .timed(let seconds):
+            // The tool schema is generic across rep- and time-based sets; a timed hold repurposes
+            // `new_reps` as the new duration in seconds since there's no dedicated field for it.
+            if let newReps, newReps != seconds {
+                changes.append("\(seconds) → \(newReps) sec")
+                info.exercise.target = .timed(seconds: newReps)
+            }
+        }
+        steps[stepIdx].page = .set(info)
+
+        let confirmation = changes.isEmpty
+            ? "\(exercise) set \(setIndex + 1): no change (fields matched the current plan)."
+            : "\(exercise) set \(setIndex + 1): \(changes.joined(separator: ", "))."
+        append(CoachMessage(kind: .diff, text: confirmation), to: transcriptExercise)
+        return confirmation
+    }
+
+    /// `skip_set` — marks a specific set skipped for the rest of the session.
+    private func applySkipSet(exercise: String, setIndex: Int, transcriptExercise: String) -> String {
+        let indices = stepIndices(forExercise: exercise)
+        guard setIndex >= 0, setIndex < indices.count else {
+            let message = "No set \(setIndex) found for \(exercise)."
+            append(CoachMessage(kind: .diff, text: message), to: transcriptExercise)
+            return message
+        }
+        let stepIdx = indices[setIndex]
+        guard case .set(var info) = steps[stepIdx].page else {
+            let message = "Could not skip \(exercise) set \(setIndex)."
+            append(CoachMessage(kind: .diff, text: message), to: transcriptExercise)
+            return message
+        }
+        info.skipped = true
+        steps[stepIdx].page = .set(info)
+
+        let confirmation = "\(exercise) set \(setIndex + 1): skipped."
+        append(CoachMessage(kind: .diff, text: confirmation), to: transcriptExercise)
+        return confirmation
+    }
+
+    /// `deload_exercise` — flags the exercise for a reduced-load block and records why.
+    private func applyDeloadExercise(exercise: String, weeks: Int, transcriptExercise: String) -> String {
+        deloaded.insert(exercise)
+        offerDeload.remove(exercise)
+        let confirmation = "\(exercise): deload scheduled for \(weeks) week\(weeks == 1 ? "" : "s")."
+        append(CoachMessage(kind: .diff, text: confirmation), to: transcriptExercise)
+        return confirmation
+    }
+
+    /// `add_note` — records a freestanding note; no set/plan mutation.
+    private func applyAddNote(scope: String, text: String, transcriptExercise: String) -> String {
+        let confirmation = "Note (\(scope)): \(text)"
+        append(CoachMessage(kind: .diff, text: confirmation), to: transcriptExercise)
+        return confirmation
+    }
+
+    /// `edit_plan` — structural plan changes (swap an exercise, change the split, add/remove a day)
+    /// are out of scope for this prototype's static `MockWorkout` plan graph, so this records the
+    /// instruction as an applied plan-level note rather than silently no-op'ing. A generic plan
+    /// mutation engine is a follow-up.
+    private func applyEditPlan(instruction: String, transcriptExercise: String) -> String {
+        let confirmation = "Plan note recorded: \(instruction)"
+        append(CoachMessage(kind: .diff, text: confirmation), to: transcriptExercise)
+        return confirmation
+    }
+
+    // MARK: Manual deload shortcut (Coach screen's "Deload 2 weeks" chip)
 
     func applyDeload() {
         guard let name = currentExerciseName else { return }
@@ -302,69 +560,6 @@ final class WorkoutSession {
 
     private func append(_ message: CoachMessage, to exercise: String) {
         transcripts[exercise, default: []].append(message)
-    }
-
-    private func contains(_ text: String, _ keywords: [String]) -> Bool {
-        keywords.contains { text.contains($0) }
-    }
-
-    private func nextSetIndex(ofExercise name: String, afterCurrent: Bool) -> Int? {
-        let start = (afterCurrent ? (currentIndex ?? -1) + 1 : 0)
-        guard start >= 0, start < steps.count else { return nil }
-        for i in start..<steps.count {
-            if case .set(let info) = steps[i].page, info.exercise.name == name, !info.skipped {
-                return i
-            }
-        }
-        return nil
-    }
-
-    private func appendWeightDiff(for name: String, factor: Double) {
-        guard let idx = nextSetIndex(ofExercise: name, afterCurrent: true),
-              case .set(var info) = steps[idx].page,
-              case .reps(let count, let weight?) = info.exercise.target else {
-            append(CoachMessage(kind: .diff, text: "Next \(name): ease off the load"), to: name)
-            return
-        }
-        let newWeight = roundedToFive(weight * factor)
-        info.exercise.target = .reps(count: count, weight: newWeight)
-        steps[idx].page = .set(info)
-        append(CoachMessage(kind: .diff, text: "Next \(name): \(Int(weight)) → \(Int(newWeight)) lb"), to: name)
-    }
-
-    private func appendWeightDelta(for name: String, delta: Double) {
-        guard let idx = nextSetIndex(ofExercise: name, afterCurrent: true),
-              case .set(var info) = steps[idx].page,
-              case .reps(let count, let weight?) = info.exercise.target else {
-            append(CoachMessage(kind: .diff, text: "Next \(name): no load to add"), to: name)
-            return
-        }
-        let newWeight = weight + delta
-        info.exercise.target = .reps(count: count, weight: newWeight)
-        steps[idx].page = .set(info)
-        append(CoachMessage(kind: .diff, text: "Next \(name): \(Int(weight)) → \(Int(newWeight)) lb"), to: name)
-    }
-
-    private func skipLastRemainingSet(for name: String) {
-        let start = currentIndex ?? 0
-        guard start < steps.count else { return }
-        var lastIdx: Int?
-        for i in start..<steps.count {
-            if case .set(let info) = steps[i].page, info.exercise.name == name, !info.skipped {
-                lastIdx = i
-            }
-        }
-        guard let idx = lastIdx, case .set(var info) = steps[idx].page else {
-            append(CoachMessage(kind: .diff, text: "No \(name) sets left to drop"), to: name)
-            return
-        }
-        info.skipped = true
-        steps[idx].page = .set(info)
-        append(CoachMessage(kind: .diff, text: "Skipping last \(name) set"), to: name)
-    }
-
-    private func roundedToFive(_ value: Double) -> Double {
-        (value / 5).rounded() * 5
     }
 
     // MARK: Summary

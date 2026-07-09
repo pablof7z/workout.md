@@ -57,9 +57,21 @@ private struct RootView: View {
     @State private var screen: AppScreen = .today
     /// The shared source of truth for the live session, created fresh each time the user starts.
     @State private var session = WorkoutSession()
+    /// App-wide, once-per-launch: the coach's Settings-backed preferences and the live coach engine
+    /// itself. Both are injected here (rather than per-screen) so Today's gear button, the Coach
+    /// screen, and Settings all share the exact same `CoachController`/`CoachEngine` instance.
+    @State private var appSettings = AppSettings.shared
+    @State private var coachController = CoachController()
     @Environment(\.modelContext) private var modelContext
 
     var body: some View {
+        content
+            .environment(appSettings)
+            .environment(coachController)
+    }
+
+    @ViewBuilder
+    private var content: some View {
         switch screen {
         case .today:
             TodayView {
