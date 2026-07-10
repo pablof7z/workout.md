@@ -1,0 +1,50 @@
+[
+  [
+    "user",
+    "deploy to my iphone"
+  ],
+  [
+    "assistant",
+    "Asked the user to sign in via Xcode's Accounts tab with the Apple ID tied to team C99QRJCR43, then continue build and deploy."
+  ],
+  [
+    "user",
+    "done"
+  ],
+  [
+    "assistant",
+    "App is installed and running on the iPhone, but noted the bundle identifier came out as md.workout instead of com.workoutmd.prototype due to automatic signing on a personal team."
+  ],
+  [
+    "user",
+    "no, use my team account -- and my bundle id"
+  ],
+  [
+    "assistant",
+    "Redeployed under the SANITY ISLAND LLC team with the correct bundle ID and updated project.yml accordingly."
+  ],
+  [
+    "user",
+    "did you commit your work?"
+  ],
+  [
+    "assistant",
+    "Committed pending docs/wiki capture files as d4e260b, noting the project.yml fix was already committed by another agent; excluded local tooling and build artifacts."
+  ],
+  [
+    "user",
+    "git igore .claude and build-decice"
+  ],
+  [
+    "assistant",
+    "Added .claude/ and build-device/ to .gitignore and committed as 306e089, leaving other fabric agents' docs/wiki files untouched."
+  ],
+  [
+    "user",
+    "commit and push"
+  ],
+  [
+    "assistant",
+    "Nothing new to commit; merged origin's new PR (#14) cleanly and pushed, bringing master to e08e0d2."
+  ]
+]

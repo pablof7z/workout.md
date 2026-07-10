@@ -1,0 +1,50 @@
+[
+  [
+    "user",
+    "deploy to my iphone"
+  ],
+  [
+    "assistant",
+    "Xcode's Settings should now be open. Please click the **Accounts** tab and sign in with the Apple ID tied to team `C99QRJCR43` (Pablo Fernandez) — 2FA may prompt on your phone/other device. Let me know once you're signed in and I'll continue the build and deploy to your iPhone."
+  ],
+  [
+    "user",
+    "done"
+  ],
+  [
+    "assistant",
+    "Workout.md is installed and running on your iPhone. It launched automatically — you should see it on screen now.\n\nOne thing worth noting: the bundle identifier came out as `md.workout` instead of the `com.workoutmd.prototype` set in `project.yml` — automatic signing on a free/personal team can rewrite the bundle ID to match what's registered for your account. Not a problem functionally, just flagging it in case it matters later (e.g., if you add entitlements tied to a specific bundle ID)."
+  ],
+  [
+    "user",
+    "no, use my team account -- and my bundle id"
+  ],
+  [
+    "assistant",
+    "Redeployed and launched — now signed under your **SANITY ISLAND LLC** team (`456SHKPP26`) with the correct bundle ID `com.workoutmd.prototype`. `project.yml` is updated to keep using this team going forward."
+  ],
+  [
+    "user",
+    "did you commit your work?"
+  ],
+  [
+    "assistant",
+    "Committed as `d4e260b`. To answer your original question: the `project.yml` team/bundle-ID fix from earlier was already committed (working tree was clean there) — likely by another agent in the fabric. Just now I committed the pending docs/wiki capture files. I left out `.claude/worktrees/` and `WorkoutMD/build-device/` since those are local tooling state and build artifacts, not source."
+  ],
+  [
+    "user",
+    "git igore .claude and build-decice"
+  ],
+  [
+    "assistant",
+    "Done — added `.claude/` and `build-device/` to `.gitignore` and committed just that change (`306e089`). I left the flood of new `docs/wiki/` files untouched since those are other fabric agents' in-progress captures, not part of what you asked for."
+  ],
+  [
+    "user",
+    "commit and push"
+  ],
+  [
+    "assistant",
+    "Pushed. There was nothing new of mine to commit (my `.gitignore` change and the docs/wiki captures were already in from the last turn), but local and origin had diverged — origin had a new PR merge (#14, NIP-29 + GitHub device-flow sign-in) that wasn't local yet. I merged it cleanly (no conflicts) and pushed; `master` is now at `e08e0d2`."
+  ]
+]

@@ -1,0 +1,50 @@
+[
+  [
+    "user",
+    "deploy to my iphone"
+  ],
+  [
+    "assistant",
+    "Asked the user to sign in to Xcode's Accounts tab with the Apple ID tied to team `C99QRJCR43`, then offered to continue the build and deploy."
+  ],
+  [
+    "user",
+    "done"
+  ],
+  [
+    "assistant",
+    "Confirmed Workout.md is installed and running on the iPhone, noting the bundle identifier came out as `md.workout` instead of the configured `com.workoutmd.prototype` due to automatic signing on a free/personal team."
+  ],
+  [
+    "user",
+    "no, use my team account -- and my bundle id"
+  ],
+  [
+    "assistant",
+    "Redeployed under the SANITY ISLAND LLC team (`456SHKPP26`) with the correct bundle ID `com.workoutmd.prototype`, and updated `project.yml` accordingly."
+  ],
+  [
+    "user",
+    "did you commit your work?"
+  ],
+  [
+    "assistant",
+    "Committed pending docs/wiki capture files as `d4e260b`; noted the earlier `project.yml` fix was already committed by another agent, and excluded `.claude/worktrees/` and `WorkoutMD/build-device/` as local tooling state and build artifacts."
+  ],
+  [
+    "user",
+    "git igore .claude and build-decice"
+  ],
+  [
+    "assistant",
+    "Added `.claude/` and `build-device/` to `.gitignore` and committed that change (`306e089`), leaving new `docs/wiki/` files untouched."
+  ],
+  [
+    "user",
+    "commit and push"
+  ],
+  [
+    "assistant",
+    "Pushed after merging a new PR (#14) from origin cleanly; `master` is now at `e08e0d2`, with nothing new of the agent's own to commit."
+  ]
+]

@@ -14,10 +14,11 @@ struct StepPageView: View {
     /// its 6pt offset from the safe area + its ~34pt capsule height + 16pt of clearance, so page
     /// content (the overline, the mini-map row) never collides with the pill sitting above it.
     private var topReserve: CGFloat { topInset + RunnerView.TopStripMetrics.totalReserve }
-    /// The bottom cluster is now just one row: the 56pt round effort icon button (or the 44pt Skip
-    /// pill, whichever is taller) plus the 10pt gap `RunnerView` adds above the safe area
-    /// (56 + 10 = 66), plus 26pt of clearance so hero content never touches the glass toolbar.
-    private var bottomReserve: CGFloat { bottomInset + 92 }
+    /// The bottom cluster is now the gesture bar (thumb + track): the 56pt round effort icon button
+    /// sits above the 72pt track, above a small hint caption, all pinned above the safe area with
+    /// 10pt of clearance from it, plus 26pt more so hero content never touches the glass track.
+    /// (56 effort + 10 row gap + 72 track + 20 hint + 10 bottom padding + 26 clearance ≈ 194.)
+    private var bottomReserve: CGFloat { bottomInset + 194 }
 
     var body: some View {
         ZStack {
@@ -53,7 +54,14 @@ struct StepPageView: View {
                         .font(.largeTitle.weight(.bold))
                         .foregroundStyle(.white)
                         .strikethrough(info.skipped, color: .white.opacity(0.6))
-                    if info.skipped {
+                    if info.completed {
+                        Text("DONE")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .glassEffect(.regular.tint(.green), in: .capsule)
+                    } else if info.skipped {
                         Text("SKIPPED")
                             .font(.caption.weight(.bold))
                             .foregroundStyle(.white)
@@ -71,7 +79,7 @@ struct StepPageView: View {
                     TimedHeroView(totalSeconds: seconds)
                         .padding(.top, 6)
                 } else {
-                    FloatingTargetRows(stepID: step.id, skipped: info.skipped)
+                    FloatingTargetRows(stepID: step.id, skipped: info.skipped, locked: info.completed)
                         .padding(.top, 6)
                 }
             }
@@ -151,6 +159,9 @@ private struct FloatingTargetRows: View {
     @Environment(WorkoutSession.self) private var session
     let stepID: WorkoutStep.ID
     let skipped: Bool
+    /// True once the DONE gesture has logged this set as the "actual" — the +/- rows freeze so a
+    /// stray tap after committing can't silently rewrite a logged number.
+    var locked: Bool = false
 
     private var target: SetTarget {
         guard let idx = session.steps.firstIndex(where: { $0.id == stepID }),
@@ -181,8 +192,8 @@ private struct FloatingTargetRows: View {
                 }
             }
         }
-        .opacity(skipped ? 0.45 : 1)
-        .disabled(skipped)
+        .opacity((skipped || locked) ? 0.45 : 1)
+        .disabled(skipped || locked)
         .accessibilityElement(children: .contain)
     }
 }
