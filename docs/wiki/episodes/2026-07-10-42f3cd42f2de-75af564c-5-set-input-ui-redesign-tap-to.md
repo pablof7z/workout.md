@@ -4,7 +4,7 @@ date: 2026-07-10
 session: 42f3cd42-f2de-49b4-abff-fc10d0bedf8f
 transcript: /Users/pablofernandez/.claude/projects/-Users-pablofernandez-Work-workout-md/42f3cd42-f2de-49b4-abff-fc10d0bedf8f.jsonl
 salience: product
-status: superseded
+status: active
 subjects:
   - set-input-ui
   - runner-view
