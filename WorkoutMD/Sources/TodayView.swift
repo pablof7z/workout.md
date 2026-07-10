@@ -82,7 +82,7 @@ struct TodayView: View {
         .sheet(isPresented: $showingHistory) {
             HistoryView()
         }
-        .sheet(isPresented: $showingSettings) {
+        .fullScreenCover(isPresented: $showingSettings) {
             SettingsView()
         }
         .sheet(isPresented: $showingPlans) {
