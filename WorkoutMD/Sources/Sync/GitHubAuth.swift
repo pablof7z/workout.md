@@ -11,13 +11,13 @@ import Security
 /// `gh auth token`, or a token pasted from https://github.com/settings/tokens. That token is
 /// written straight to the Keychain and is never held in a stored property or logged.
 ///
-/// ## Device flow (scaffolded, not wired to any UI yet)
+/// ## Device flow ("Sign in with GitHub" in Settings)
 /// `beginDeviceFlow`/`pollDeviceFlow`/`authenticateWithDeviceFlow` implement GitHub's OAuth device
-/// flow end-to-end, but they require a *registered GitHub OAuth App* client ID — see
-/// `deviceFlowClientID` below. Until that's filled in, calling them will fail against GitHub's API
-/// (the `client_id` won't resolve to a real app). The PAT path above is the supported default; the
-/// device flow is here so a later Settings screen can offer "Sign in with GitHub" without a token
-/// paste, once an OAuth App is registered and its client id dropped in.
+/// flow end-to-end and are wired to the Settings Sync section's "Sign in with GitHub" button, but
+/// they require a *registered GitHub OAuth App* client ID — see `deviceFlowClientID` below. Until
+/// that's filled in, Settings shows a calm "not configured yet" state instead of calling this at
+/// all (the `client_id` placeholder won't resolve to a real app on GitHub's side). The PAT path
+/// above remains available under Settings' "Advanced" disclosure as a fallback either way.
 @Observable
 final class GitHubAuth {
     static let shared = GitHubAuth()
@@ -122,11 +122,13 @@ final class GitHubAuth {
 
     // MARK: - Device flow (scaffold — requires a registered OAuth App client id)
 
-    /// TODO: replace with a real GitHub OAuth App's client id (Settings -> Developer settings ->
-    /// OAuth Apps, "Device Flow" enabled) to make `authenticateWithDeviceFlow` actually usable. The
-    /// device-flow methods below are fully implemented against GitHub's documented protocol; only
-    /// this identifier is missing.
-    static var deviceFlowClientID = "TODO_REGISTER_GITHUB_OAUTH_APP_CLIENT_ID"
+    /// The registered GitHub OAuth App's client id (Settings -> Developer settings -> OAuth Apps,
+    /// "Device Flow" enabled). This is a *public* client identifier — device flow needs no client
+    /// secret, so hardcoding it here is the standard, correct approach (same as e.g. the GitHub CLI
+    /// itself). `Settings.deviceFlowConfigured` still treats an empty string as "not configured"
+    /// and falls back to a calm placeholder state, so this can safely be blanked out again if the
+    /// app is ever deregistered.
+    static var deviceFlowClientID = "Ov23liOoVH2edVWyaqJr"
 
     struct DeviceCodeResponse: Decodable {
         let deviceCode: String

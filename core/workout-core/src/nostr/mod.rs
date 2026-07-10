@@ -20,11 +20,16 @@
 //! - [`NostrCoach::configure`] selects the relay set, optional profile
 //!   indexer, and NIP-29 channel used by every call below.
 //! - [`NostrCoach::publish_profile`] / [`NostrCoach::publish_message`] /
-//!   [`NostrCoach::create_group`] / [`NostrCoach::add_member`] each connect
+//!   [`NostrCoach::create_group`] / [`NostrCoach::add_member`] /
+//!   [`NostrCoach::request_to_join`] / [`NostrCoach::leave`] each connect
 //!   (or reuse a cached connection), sign with the configured identity, and
 //!   publish over the engine's background runtime, blocking only the calling
 //!   thread's dedicated call, never the caller's own thread — see the
-//!   `runtime.block_on` note on `ensure_client` (below).
+//!   `runtime.block_on` note on `ensure_client` (below). `request_to_join`
+//!   is the standard NIP-29 join-request (kind:9021) for a channel this
+//!   identity isn't a member of yet — unlike `create_group`/`add_member`,
+//!   which assume the caller is already (or is about to become) the group's
+//!   admin.
 //! - [`NostrCoach::start_subscription`] subscribes kind:9 (+30315/30555/30023)
 //!   for `#h = channel` and pushes every inbound kind:9 to a Swift-implemented
 //!   [`NostrSink`], detached on the background runtime — mirrors
@@ -257,6 +262,44 @@ impl NostrCoach {
         self.runtime.block_on(async move {
             let (client, keys) = ensure_client(&self.state, snapshot).await?;
             let signed = sign(wire::group_put_user_event(&channel, &pubkey), &keys).await?;
+            let targets = publish_targets_main_only(&self.state);
+            publish_checked(&client, &signed, &targets).await
+        })
+    }
+
+    /// Publishes a standard NIP-29 join-request (kind:9021, `["h", channel]`
+    /// + optional `["code", invite_code]`) to the main relay set, asking to
+    /// join `channel` — for a channel this identity is not (yet) a member
+    /// of. Publishing this alone doesn't grant membership: an open group's
+    /// relay may auto-approve, while a closed group's admin must still
+    /// follow up with a kind:9000 put-user (see [`NostrCoach::add_member`]).
+    /// Returns the published event id (hex) once at least one relay has
+    /// ack'd it — that's the join-request having been *sent*, not proof it
+    /// was approved.
+    pub fn request_to_join(
+        &self,
+        channel: String,
+        invite_code: Option<String>,
+    ) -> Result<String, NostrError> {
+        let snapshot = capture_snapshot(&self.state)?;
+        self.runtime.block_on(async move {
+            let (client, keys) = ensure_client(&self.state, snapshot).await?;
+            let builder = wire::join_request_event(&channel, invite_code.as_deref());
+            let signed = sign(builder, &keys).await?;
+            let targets = publish_targets_main_only(&self.state);
+            publish_checked(&client, &signed, &targets).await
+        })
+    }
+
+    /// Publishes a NIP-29 leave-request (kind:9022, `["h", channel]`) to the
+    /// main relay set, asking to leave `channel`. Returns the published
+    /// event id (hex) once at least one relay has ack'd it.
+    pub fn leave(&self, channel: String) -> Result<String, NostrError> {
+        let snapshot = capture_snapshot(&self.state)?;
+        self.runtime.block_on(async move {
+            let (client, keys) = ensure_client(&self.state, snapshot).await?;
+            let builder = wire::leave_request_event(&channel);
+            let signed = sign(builder, &keys).await?;
             let targets = publish_targets_main_only(&self.state);
             publish_checked(&client, &signed, &targets).await
         })
