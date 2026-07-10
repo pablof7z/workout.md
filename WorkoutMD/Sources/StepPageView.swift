@@ -287,13 +287,32 @@ private struct DoneSkipThumb: View {
     }
 
     var body: some View {
-        GeometryReader { geo in
-            dragSurface
-                .frame(width: geo.size.width, height: trackHeight)
-                .onAppear { trackWidth = geo.size.width }
-                .onChange(of: geo.size.width) { _, newValue in trackWidth = newValue }
+        VStack(spacing: 6) {
+            effortLabelRow
+            GeometryReader { geo in
+                dragSurface
+                    .frame(width: geo.size.width, height: trackHeight)
+                    .onAppear { trackWidth = geo.size.width }
+                    .onChange(of: geo.size.width) { _, newValue in trackWidth = newValue }
+            }
+            .frame(height: trackHeight)
         }
-        .frame(height: trackHeight)
+    }
+
+    /// A small label a few points ABOVE the slider showing the rated effort ("HARD", "VERY HARD", …)
+    /// once the set is done + rated — sits in a fixed-height row so the slider never shifts when it
+    /// appears/disappears.
+    private var effortLabelRow: some View {
+        ZStack {
+            if displayState == .done, let rpe {
+                Text(EffortScale.label(for: rpe).uppercased())
+                    .font(.caption.weight(.bold))
+                    .tracking(1.5)
+                    .foregroundStyle(EffortScale.color(for: rpe))
+                    .transition(.opacity.combined(with: .scale))
+            }
+        }
+        .frame(height: 18)
     }
 
     /// The whole pill IS the drag surface — the `DragGesture`/`TapGesture` are attached here, at the
@@ -358,25 +377,6 @@ private struct DoneSkipThumb: View {
                     pendingGrip
                 }
             }
-            .overlay(alignment: .topTrailing) {
-                if displayState == .done, let rpe {
-                    effortBadge(rpe)
-                }
-            }
-    }
-
-    /// A small badge on the done (✓) knob showing the RPE the user rated this set (6–10), tinted by
-    /// the effort scale. Only appears once the set is `.done` AND has been rated via the effort prompt.
-    private func effortBadge(_ rpe: Double) -> some View {
-        Text("\(Int(rpe.rounded()))")
-            .font(.system(size: 13, weight: .heavy, design: .rounded))
-            .foregroundStyle(.white)
-            .frame(width: 24, height: 24)
-            .background(Circle().fill(EffortScale.color(for: rpe)))
-            .overlay(Circle().strokeBorder(.white, lineWidth: 1.5))
-            .shadow(color: .black.opacity(0.3), radius: 2, y: 1)
-            .offset(x: 5, y: -5)
-            .transition(.scale.combined(with: .opacity))
     }
 
     /// Two subtle vertical bars — a minimal "grip" affordance, like a drag handle, shown only while
