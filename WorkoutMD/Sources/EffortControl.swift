@@ -2,7 +2,8 @@ import SwiftUI
 
 /// An expressive, interactive effort input that replaces the old Easy/Moderate/Hard pills.
 ///
-/// Collapsed, it's a compact glass capsule ("Rate effort", or the committed value recolored).
+/// Collapsed, it's a compact, auto-width glass capsule ("Rate effort", or the committed value
+/// recolored, e.g. "RPE 8" — the tint color already conveys severity so the label stays short).
 /// Tapping it morphs — via a shared `glassEffectID` inside a `GlassEffectContainer` — into an
 /// interactive glass scale: a calm→hot gradient track with a draggable knob and a large live value
 /// that scales and recolors as you drag. It maps to RPE 6–10 with detents at each integer, ticking
@@ -11,9 +12,11 @@ import SwiftUI
 struct EffortControl: View {
     /// The committed RPE for the current set (nil until the user rates it).
     let committed: Double?
+    /// Lets the parent toolbar (see `ControlsView`) hide its sibling Skip/Finish button while this
+    /// is expanded — the expanded scale needs the full row width, so the two can't coexist.
+    @Binding var expanded: Bool
     var onCommit: (Double) -> Void
 
-    @State private var expanded = false
     @State private var value: Double = 8
     @State private var lastDetent: Int = 8
     @Namespace private var glass
@@ -39,20 +42,15 @@ struct EffortControl: View {
             lastDetent = Int(value.rounded())
             withAnimation(.snappy(duration: 0.32)) { expanded = true }
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 Image(systemName: "bolt.heart")
                     .font(.subheadline.weight(.semibold))
-                if let committed {
-                    Text("\(EffortScale.label(for: committed)) · RPE \(Int(committed.rounded()))")
-                        .font(.subheadline.weight(.semibold))
-                } else {
-                    Text("Rate effort")
-                        .font(.subheadline.weight(.semibold))
-                }
+                Text(committed.map { "RPE \(Int($0.rounded()))" } ?? "Rate effort")
+                    .font(.subheadline.weight(.semibold))
             }
             .foregroundStyle(committed == nil ? .white : .black)
-            .frame(maxWidth: .infinity)
-            .frame(height: 48)
+            .padding(.horizontal, 16)
+            .frame(height: 44)
         }
         .buttonStyle(.plain)
         .glassEffect(

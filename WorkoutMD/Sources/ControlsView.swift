@@ -12,51 +12,61 @@ struct ControlsView: View {
     var onSkip: () -> Void
     var onFinish: () -> Void
 
+    @State private var effortExpanded = false
+
     var body: some View {
         VStack(spacing: 12) {
             if case .set(let info) = step.page {
-                EffortControl(committed: session.rpe[step.id]) { value in
-                    session.setEffort(value, for: step.id)
+                if case .reps = info.exercise.target {
+                    HStack(spacing: 12) {
+                        RepsNudgeRow(stepID: step.id)
+                        Spacer(minLength: 0)
+                    }
                 }
 
-                HStack(spacing: 12) {
-                    if case .reps = info.exercise.target {
-                        RepsNudgeRow(stepID: step.id)
-                    }
-
-                    Spacer(minLength: 0)
-
-                    if isLast {
-                        Button {
-                            Haptics.impact(.medium)
-                            onFinish()
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "flag.checkered")
-                                Text("Finish")
-                            }
-                            .font(.subheadline.weight(.bold))
-                            .frame(height: 44)
-                            .padding(.horizontal, 18)
+                GlassEffectContainer(spacing: 12) {
+                    HStack(spacing: 12) {
+                        EffortControl(committed: session.rpe[step.id], expanded: $effortExpanded) { value in
+                            session.setEffort(value, for: step.id)
                         }
-                        .buttonStyle(.glassProminent)
-                        .tint(.green)
-                        .accessibilityLabel("Finish workout")
-                    } else {
-                        Button(action: onSkip) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "forward.end")
-                                Text("Skip")
+
+                        if !effortExpanded {
+                            Spacer(minLength: 0)
+
+                            if isLast {
+                                Button {
+                                    Haptics.impact(.medium)
+                                    onFinish()
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "flag.checkered")
+                                        Text("Finish")
+                                    }
+                                    .font(.subheadline.weight(.bold))
+                                    .frame(height: 44)
+                                    .padding(.horizontal, 18)
+                                }
+                                .buttonStyle(.glassProminent)
+                                .tint(.green)
+                                .accessibilityLabel("Finish workout")
+                            } else {
+                                Button(action: onSkip) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "forward.end")
+                                        Text("Skip")
+                                    }
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.white.opacity(0.9))
+                                    .frame(height: 44)
+                                    .padding(.horizontal, 16)
+                                }
+                                .buttonStyle(.plain)
+                                .glassEffect(.regular.interactive(), in: .capsule)
+                                .accessibilityLabel("Skip this set")
                             }
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.white.opacity(0.9))
-                            .frame(height: 44)
-                            .padding(.horizontal, 16)
                         }
-                        .buttonStyle(.plain)
-                        .glassEffect(.regular.interactive(), in: .capsule)
-                        .accessibilityLabel("Skip this set")
                     }
+                    .animation(.snappy(duration: 0.32), value: effortExpanded)
                 }
             } else if isLast {
                 // A rest page can't be the last step in this workout, but guard anyway.
