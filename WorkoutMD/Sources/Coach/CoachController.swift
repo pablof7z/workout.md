@@ -50,9 +50,9 @@ final class CoachController {
     /// Re-applies the current provider/model/credentials to the engine. Cheap (just updates
     /// engine-held state, no network call) — called before every turn, and should also be called
     /// whenever `SettingsView` changes the provider, model, base URL, or stored key.
-    func applySettings() {
+    func applySettings(role: CoachModelRole = .liveCoach) {
         let apiKey = try? CoachSecrets.apiKey(for: settings.providerKind)
-        engine.configureCoach(provider: settings.providerConfig(apiKey: apiKey), model: settings.model)
+        engine.configureCoach(provider: settings.providerConfig(apiKey: apiKey), model: settings.model(for: role))
     }
 
     /// Sends the athlete's plain-language note for `exerciseName`, streaming the reply into
@@ -68,7 +68,7 @@ final class CoachController {
         let text = userMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
 
-        applySettings()
+        applySettings(role: .liveCoach)
 
         let planID = session.activePlan?.id
 
@@ -138,7 +138,7 @@ final class CoachController {
     /// the product spec allows instead of a new Rust-core tool + bindings regen. `completion` is
     /// always called on the main thread.
     func generatePlan(goalPrompt: String, sessionLengthMinutes: Int, completion: @escaping (Result<PlanRecord, PlanGenerationError>) -> Void) {
-        applySettings()
+        applySettings(role: .planGeneration)
 
         let userMessage = """
         Goal: \(goalPrompt)
@@ -201,7 +201,7 @@ final class CoachController {
     /// "coach reviewed your changes" surface and folds it into every subsequent `send()`'s grounding.
     func reviewExternalChanges(_ changes: [GitHubSync.ChangedFile]) {
         guard !changes.isEmpty else { return }
-        applySettings()
+        applySettings(role: .externalReview)
 
         let digest = changes.prefix(5).map { file -> String in
             "### \(file.path) (commit: \(file.commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80)))\n\(file.content.prefix(1500))"

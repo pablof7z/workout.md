@@ -58,6 +58,36 @@ enum CoachVerbosity: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// Distinct AI roles that can use different model choices while sharing the same provider and
+/// credential boundary. The Rust engine already accepts a model each time it is configured, so this is
+/// a Swift settings/runtime concern rather than a new UniFFI contract.
+enum CoachModelRole: String, Codable, CaseIterable, Identifiable {
+    case liveCoach
+    case planGeneration
+    case externalReview
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .liveCoach: return "Live Coach"
+        case .planGeneration: return "Plan Generation / Repair"
+        case .externalReview: return "External Change Review"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .liveCoach:
+            return "In-session coaching turns and tool calls."
+        case .planGeneration:
+            return "Plan creation and the What should I do next repair flow."
+        case .externalReview:
+            return "Reviews Markdown changes pulled from external sync targets."
+        }
+    }
+}
+
 /// App-wide, non-secret preferences: coach provider/model/voice, the GitHub sync repo name, and
 /// training goals/dislikes. Backed by `UserDefaults` — nothing stored here is sensitive. The
 /// OpenRouter/Ollama API keys and the GitHub token live in the Keychain instead (`CoachSecrets`,
@@ -78,6 +108,15 @@ final class AppSettings {
     }
     var model: String {
         didSet { defaults.set(model, forKey: Keys.model) }
+    }
+    var liveCoachModel: String {
+        didSet { defaults.set(liveCoachModel, forKey: Keys.liveCoachModel) }
+    }
+    var planGenerationModel: String {
+        didSet { defaults.set(planGenerationModel, forKey: Keys.planGenerationModel) }
+    }
+    var externalReviewModel: String {
+        didSet { defaults.set(externalReviewModel, forKey: Keys.externalReviewModel) }
     }
     var verbosity: CoachVerbosity {
         didSet { defaults.set(verbosity.rawValue, forKey: Keys.verbosity) }
@@ -180,6 +219,9 @@ final class AppSettings {
         static let providerKind = "coach.providerKind"
         static let ollamaBaseURL = "coach.ollamaBaseURL"
         static let model = "coach.model"
+        static let liveCoachModel = "coach.model.liveCoach"
+        static let planGenerationModel = "coach.model.planGeneration"
+        static let externalReviewModel = "coach.model.externalReview"
         static let verbosity = "coach.verbosity"
         static let systemPromptOverride = "coach.systemPromptOverride"
         static let githubRepoName = "sync.githubRepoName"
@@ -210,7 +252,11 @@ final class AppSettings {
             let stored = defaults.string(forKey: Keys.ollamaBaseURL) ?? ""
             return stored.isEmpty ? "http://localhost:11434" : stored
         }()
-        model = defaults.string(forKey: Keys.model) ?? ""
+        let storedModel = defaults.string(forKey: Keys.model) ?? ""
+        model = storedModel
+        liveCoachModel = defaults.string(forKey: Keys.liveCoachModel) ?? storedModel
+        planGenerationModel = defaults.string(forKey: Keys.planGenerationModel) ?? storedModel
+        externalReviewModel = defaults.string(forKey: Keys.externalReviewModel) ?? storedModel
         verbosity = CoachVerbosity(rawValue: defaults.string(forKey: Keys.verbosity) ?? "") ?? .balanced
         systemPromptOverride = defaults.string(forKey: Keys.systemPromptOverride) ?? ""
 
@@ -286,6 +332,33 @@ final class AppSettings {
             return .openRouter(apiKey: key ?? "", baseUrl: nil)
         case .ollama:
             return .ollama(baseUrl: ollamaBaseURL, apiKey: key)
+        }
+    }
+
+    func model(for role: CoachModelRole) -> String {
+        let roleModel: String
+        switch role {
+        case .liveCoach:
+            roleModel = liveCoachModel
+        case .planGeneration:
+            roleModel = planGenerationModel
+        case .externalReview:
+            roleModel = externalReviewModel
+        }
+        let trimmed = roleModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { return trimmed }
+        return model.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func setModel(_ value: String, for role: CoachModelRole) {
+        switch role {
+        case .liveCoach:
+            liveCoachModel = value
+            model = value
+        case .planGeneration:
+            planGenerationModel = value
+        case .externalReview:
+            externalReviewModel = value
         }
     }
 }

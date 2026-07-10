@@ -59,7 +59,7 @@ struct CoachView: View {
         .onChange(of: exerciseName) { _, newValue in
             session.seedTranscriptIfNeeded(for: newValue)
         }
-        .sheet(isPresented: $showingSettings) {
+        .fullScreenCover(isPresented: $showingSettings) {
             SettingsView()
         }
     }
