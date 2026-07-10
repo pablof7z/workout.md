@@ -52,7 +52,7 @@ Last updated: 2026-07-10
 | [2026-07-10-42f3cd42f2de-75af564c-2-final-opus-readiness-gate-re-audit](research/2026-07-10-42f3cd42f2de-75af564c-2-final-opus-readiness-gate-re-audit.md) | 2026-07-10 | Final Opus readiness gate: re-audit with simulator build, live coach tool-loop test, and punch-list verification table; verdict PASS | subagent (Final Opus readiness gate) |
 | [AGENTS](research/AGENTS.md) |  |  |  |
 
-## Episode Cards (25 cards)
+## Episode Cards (26 cards)
 
 | Card | Date | Title | Salience | Status |
 |------|------|-------|----------|--------|
@@ -71,7 +71,8 @@ Last updated: 2026-07-10
 | [2026-07-10-42f3cd42f2de-75af564c-5-set-input-ui-redesign-tap-to](episodes/2026-07-10-42f3cd42f2de-75af564c-5-set-input-ui-redesign-tap-to.md) | 2026-07-10 | Set-input UI redesign: tap-to-reveal converges to floating-lines with reps and weight both editable, centered | product | superseded |
 | [2026-07-10-42f3cd42f2de-75af564c-6-nip-29-join-request-kind-9021](episodes/2026-07-10-42f3cd42f2de-75af564c-6-nip-29-join-request-kind-9021.md) | 2026-07-10 | NIP-29 join request (kind 9021) for requesting channel access when not a member | product | superseded |
 | [2026-07-10-42f3cd42f2de-75af564c-7-productization-finishing-pass-app-icon-onboarding](episodes/2026-07-10-42f3cd42f2de-75af564c-7-productization-finishing-pass-app-icon-onboarding.md) | 2026-07-10 | Productization finishing pass: app icon, onboarding, dev-scaffolding removal, default provider and no-key coach state | product | active |
-| [2026-07-10-43fd928f6da0-b40f7d8e-1-code-signing-team-switched-from-personal](episodes/2026-07-10-43fd928f6da0-b40f7d8e-1-code-signing-team-switched-from-personal.md) | 2026-07-10 | Code signing team switched from personal free team to paid SANITY ISLAND LLC to preserve bundle ID | architecture | active |
+| [2026-07-10-43fd928f6da0-b40f7d8e-1-code-signing-switched-from-disabled-simulator](episodes/2026-07-10-43fd928f6da0-b40f7d8e-1-code-signing-switched-from-disabled-simulator.md) | 2026-07-10 | Code signing switched from disabled/simulator-only to paid team (SANITY ISLAND LLC) with enforced bundle ID | architecture | active |
+| [2026-07-10-43fd928f6da0-b40f7d8e-1-code-signing-team-switched-from-personal](episodes/2026-07-10-43fd928f6da0-b40f7d8e-1-code-signing-team-switched-from-personal.md) | 2026-07-10 | Code signing team switched from personal free team to paid SANITY ISLAND LLC to preserve bundle ID | architecture | superseded |
 | [2026-07-10-43fd928f6da0-b40f7d8e-1-switch-ios-project-from-no-signing](episodes/2026-07-10-43fd928f6da0-b40f7d8e-1-switch-ios-project-from-no-signing.md) | 2026-07-10 | Switch iOS project from no-signing/simulator to paid-team code signing | architecture | superseded |
 | [2026-07-10-576bd63b163a-031f8906-1-overlay-after-ignoressafearea-double-counts-safe](episodes/2026-07-10-576bd63b163a-031f8906-1-overlay-after-ignoressafearea-double-counts-safe.md) | 2026-07-10 | Overlay-after-ignoresSafeArea double-counts safe-area insets | root-cause | superseded |
 | [2026-07-10-576bd63b163a-031f8906-1-overlay-safe-area-double-count-root](episodes/2026-07-10-576bd63b163a-031f8906-1-overlay-safe-area-double-count-root.md) | 2026-07-10 | Overlay safe-area double-count root cause for top pill overlap | root-cause | active |

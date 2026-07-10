@@ -4,7 +4,7 @@ date: 2026-07-10
 session: 43fd928f-6da0-404c-a38a-406d6cdfb05f
 transcript: /Users/pablofernandez/.claude/projects/-Users-pablofernandez-Work-workout-md/43fd928f-6da0-404c-a38a-406d6cdfb05f.jsonl
 salience: architecture
-status: active
+status: superseded
 subjects:
   - code-signing
   - bundle-id
