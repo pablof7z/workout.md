@@ -10,6 +10,26 @@ targets:
     platform: iOS
     sources:
       - path: Sources
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDevelopmentRegion: $(DEVELOPMENT_LANGUAGE)
+        CFBundleDisplayName: Workout.md
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleInfoDictionaryVersion: "6.0"
+        CFBundleName: $(PRODUCT_NAME)
+        CFBundlePackageType: APPL
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleURLTypes:
+          - CFBundleURLName: com.workoutmd.prototype.byok
+            CFBundleURLSchemes:
+              - workoutmd
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchStoryboardName: LaunchScreen
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIStatusBarStyle: UIStatusBarStyleLightContent
     preBuildScripts:
       - name: Build Rust core (workout-core)
         basedOnDependencyAnalysis: false
@@ -90,15 +110,11 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.workoutmd.prototype
-        GENERATE_INFOPLIST_FILE: YES
+        GENERATE_INFOPLIST_FILE: NO
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"
-        INFOPLIST_KEY_CFBundleDisplayName: "Workout.md"
-        INFOPLIST_KEY_UILaunchStoryboardName: "LaunchScreen"
-        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait"
-        INFOPLIST_KEY_UIStatusBarStyle: "UIStatusBarStyleLightContent"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         CODE_SIGNING_REQUIRED: NO

@@ -15,28 +15,71 @@ enum CoachSecrets {
     private enum Account: String {
         case openRouterAPIKey = "openrouter-api-key"
         case ollamaAPIKey = "ollama-api-key"
+        case openRouterBYOKMetadata = "openrouter-byok-metadata"
+        case ollamaBYOKMetadata = "ollama-byok-metadata"
     }
 
-    static func openRouterAPIKey() throws -> String? { try read(.openRouterAPIKey) }
-    static func setOpenRouterAPIKey(_ value: String) throws { try write(value, account: .openRouterAPIKey) }
-    static func clearOpenRouterAPIKey() throws { try delete(.openRouterAPIKey) }
+    static func openRouterAPIKey() throws -> String? { try readString(.openRouterAPIKey) }
+    static func setOpenRouterAPIKey(_ value: String) throws {
+        let existing = try readString(.openRouterAPIKey)
+        try write(value, account: .openRouterAPIKey)
+        if existing != value {
+            try delete(.openRouterBYOKMetadata)
+        }
+    }
+    static func clearOpenRouterAPIKey() throws { try clearProvider(.openRouter) }
 
-    static func ollamaAPIKey() throws -> String? { try read(.ollamaAPIKey) }
-    static func setOllamaAPIKey(_ value: String) throws { try write(value, account: .ollamaAPIKey) }
-    static func clearOllamaAPIKey() throws { try delete(.ollamaAPIKey) }
+    static func ollamaAPIKey() throws -> String? { try readString(.ollamaAPIKey) }
+    static func setOllamaAPIKey(_ value: String) throws {
+        let existing = try readString(.ollamaAPIKey)
+        try write(value, account: .ollamaAPIKey)
+        if existing != value {
+            try delete(.ollamaBYOKMetadata)
+        }
+    }
+    static func clearOllamaAPIKey() throws { try clearProvider(.ollama) }
 
     /// Reads whichever credential matches `provider` — the one `CoachController` needs when it
     /// (re)configures the engine.
     static func apiKey(for provider: CoachProviderKind) throws -> String? {
-        switch provider {
-        case .openRouter: return try openRouterAPIKey()
-        case .ollama: return try ollamaAPIKey()
-        }
+        try readString(keyAccount(for: provider))
+    }
+
+    static func hasAPIKey(for provider: CoachProviderKind) -> Bool {
+        (((try? apiKey(for: provider)) ?? nil)?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+    }
+
+    static func byokConnection(for provider: CoachProviderKind) -> CoachProviderConnection? {
+        guard let data = try? readData(metadataAccount(for: provider)) else { return nil }
+        return try? JSONDecoder().decode(CoachProviderConnection.self, from: data)
+    }
+
+    static func saveBYOKGrant(_ grant: BYOKProviderGrant) throws -> CoachProviderConnection {
+        try write(grant.apiKey, account: keyAccount(for: grant.provider))
+
+        let connection = CoachProviderConnection(
+            provider: grant.provider,
+            keyID: grant.keyID,
+            keyLabel: grant.keyLabel.isEmpty ? "Default" : grant.keyLabel,
+            connectedAt: Date()
+        )
+        let data = try JSONEncoder().encode(connection)
+        try write(data, account: metadataAccount(for: grant.provider))
+        return connection
+    }
+
+    static func clearProvider(_ provider: CoachProviderKind) throws {
+        try delete(keyAccount(for: provider))
+        try delete(metadataAccount(for: provider))
     }
 
     // MARK: - Keychain primitives
 
     private static func write(_ value: String, account: Account) throws {
+        try write(Data(value.utf8), account: account)
+    }
+
+    private static func write(_ data: Data, account: Account) throws {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -45,9 +88,9 @@ enum CoachSecrets {
         SecItemDelete(query as CFDictionary)
 
         // Saving an empty string just clears the stored value — there's nothing useful to keep.
-        guard !value.isEmpty else { return }
+        guard !data.isEmpty else { return }
 
-        query[kSecValueData as String] = Data(value.utf8)
+        query[kSecValueData as String] = data
         query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         let status = SecItemAdd(query as CFDictionary, nil)
         guard status == errSecSuccess else { throw CoachSecretsError.keychain(status) }
@@ -65,7 +108,12 @@ enum CoachSecrets {
         }
     }
 
-    private static func read(_ account: Account) throws -> String? {
+    private static func readString(_ account: Account) throws -> String? {
+        guard let data = try readData(account) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private static func readData(_ account: Account) throws -> Data? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -79,7 +127,21 @@ enum CoachSecrets {
         guard status == errSecSuccess, let data = item as? Data else {
             throw CoachSecretsError.keychain(status)
         }
-        return String(data: data, encoding: .utf8)
+        return data
+    }
+
+    private static func keyAccount(for provider: CoachProviderKind) -> Account {
+        switch provider {
+        case .openRouter: return .openRouterAPIKey
+        case .ollama: return .ollamaAPIKey
+        }
+    }
+
+    private static func metadataAccount(for provider: CoachProviderKind) -> Account {
+        switch provider {
+        case .openRouter: return .openRouterBYOKMetadata
+        case .ollama: return .ollamaBYOKMetadata
+        }
     }
 }
 

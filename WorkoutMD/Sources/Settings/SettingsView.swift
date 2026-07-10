@@ -863,12 +863,57 @@ private struct ProvidersSettingsView: View {
     @State private var openRouterKey = ""
     @State private var ollamaKey = ""
     @State private var keyStatus: String?
+    @State private var byokConnector = BYOKProviderConnector()
+    @State private var openRouterConnection: CoachProviderConnection?
+    @State private var ollamaConnection: CoachProviderConnection?
+    @State private var byokStatus: String?
+    @State private var byokError: String?
+    @State private var isConnectingBYOK = false
     @State private var ollamaModels: [String] = []
     @State private var isFetchingModels = false
     @State private var fetchModelsError: String?
 
     var body: some View {
         Form {
+            Section {
+                ProviderConnectionStatusRow(
+                    provider: .openRouter,
+                    connection: openRouterConnection,
+                    hasStoredKey: CoachSecrets.hasAPIKey(for: .openRouter)
+                )
+                ProviderConnectionStatusRow(
+                    provider: .ollama,
+                    connection: ollamaConnection,
+                    hasStoredKey: CoachSecrets.hasAPIKey(for: .ollama)
+                )
+
+                Button {
+                    Task { await connectWithBYOK(providers: CoachProviderKind.allCases) }
+                } label: {
+                    HStack {
+                        Label("Connect Providers with BYOK", systemImage: "link.badge.plus")
+                        Spacer()
+                        if isConnectingBYOK { ProgressView() }
+                    }
+                }
+                .disabled(isConnectingBYOK)
+
+                if let byokStatus {
+                    Text(byokStatus)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if let byokError {
+                    Text(byokError)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            } header: {
+                Text("BYOK")
+            } footer: {
+                Text("BYOK opens in the system browser with PKCE. Only selected provider keys are returned and stored in Keychain.")
+            }
+
             Section {
                 Picker("Provider", selection: $settings.providerKind) {
                     ForEach(CoachProviderKind.allCases) { provider in
@@ -890,8 +935,23 @@ private struct ProvidersSettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                    Button {
+                        Task { await connectWithBYOK(providers: [.openRouter]) }
+                    } label: {
+                        HStack {
+                            Label(openRouterConnection == nil ? "Connect OpenRouter with BYOK" : "Reconnect OpenRouter with BYOK", systemImage: "link")
+                            Spacer()
+                            if isConnectingBYOK { ProgressView() }
+                        }
+                    }
+                    .disabled(isConnectingBYOK)
                     Button("Test OpenRouter") {
                         keyStatus = openRouterKey.isEmpty ? "No key stored." : "Key is stored. Live test not run from Settings."
+                    }
+                    if CoachSecrets.hasAPIKey(for: .openRouter) {
+                        Button("Disconnect OpenRouter", role: .destructive) {
+                            clearProvider(.openRouter)
+                        }
                     }
                 } header: {
                     Text("OpenRouter")
@@ -912,6 +972,17 @@ private struct ProvidersSettingsView: View {
                         .onChange(of: ollamaKey) { _, newValue in saveOllamaKey(newValue) }
 
                     Button {
+                        Task { await connectWithBYOK(providers: [.ollama]) }
+                    } label: {
+                        HStack {
+                            Label(ollamaConnection == nil ? "Connect Ollama with BYOK" : "Reconnect Ollama with BYOK", systemImage: "link")
+                            Spacer()
+                            if isConnectingBYOK { ProgressView() }
+                        }
+                    }
+                    .disabled(isConnectingBYOK)
+
+                    Button {
                         Task { await fetchOllamaModels() }
                     } label: {
                         HStack {
@@ -926,6 +997,11 @@ private struct ProvidersSettingsView: View {
                         Text(fetchModelsError)
                             .font(.caption)
                             .foregroundStyle(.orange)
+                    }
+                    if CoachSecrets.hasAPIKey(for: .ollama) {
+                        Button("Disconnect Ollama Key", role: .destructive) {
+                            clearProvider(.ollama)
+                        }
                     }
                     if !ollamaModels.isEmpty {
                         ForEach(ollamaModels, id: \.self) { name in
@@ -942,20 +1018,67 @@ private struct ProvidersSettingsView: View {
         .navigationTitle("Providers")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            openRouterKey = (try? CoachSecrets.openRouterAPIKey()) ?? ""
-            ollamaKey = (try? CoachSecrets.ollamaAPIKey()) ?? ""
+            reloadStoredProviders()
         }
     }
 
     private func saveOpenRouterKey(_ value: String) {
         try? CoachSecrets.setOpenRouterAPIKey(value)
         keyStatus = value.isEmpty ? nil : "Key saved to Keychain."
+        openRouterConnection = CoachSecrets.byokConnection(for: .openRouter)
         coach.applySettings()
     }
 
     private func saveOllamaKey(_ value: String) {
         try? CoachSecrets.setOllamaAPIKey(value)
+        ollamaConnection = CoachSecrets.byokConnection(for: .ollama)
         coach.applySettings()
+    }
+
+    private func connectWithBYOK(providers: [CoachProviderKind]) async {
+        isConnectingBYOK = true
+        byokStatus = nil
+        byokError = nil
+        defer { isConnectingBYOK = false }
+
+        do {
+            let grants = try await byokConnector.connect(providers: providers)
+            for grant in grants {
+                _ = try CoachSecrets.saveBYOKGrant(grant)
+            }
+            reloadStoredProviders()
+            coach.applySettings()
+            byokStatus = "Connected \(grants.map { $0.provider.label }.joined(separator: ", "))."
+        } catch {
+            byokError = error.localizedDescription
+        }
+    }
+
+    private func clearProvider(_ provider: CoachProviderKind) {
+        do {
+            try CoachSecrets.clearProvider(provider)
+            switch provider {
+            case .openRouter:
+                openRouterKey = ""
+                openRouterConnection = nil
+            case .ollama:
+                ollamaKey = ""
+                ollamaConnection = nil
+            }
+            keyStatus = nil
+            byokStatus = "\(provider.label) key removed."
+            byokError = nil
+            coach.applySettings()
+        } catch {
+            byokError = error.localizedDescription
+        }
+    }
+
+    private func reloadStoredProviders() {
+        openRouterKey = (try? CoachSecrets.openRouterAPIKey()) ?? ""
+        ollamaKey = (try? CoachSecrets.ollamaAPIKey()) ?? ""
+        openRouterConnection = CoachSecrets.byokConnection(for: .openRouter)
+        ollamaConnection = CoachSecrets.byokConnection(for: .ollama)
     }
 
     private func fetchOllamaModels() async {
@@ -979,6 +1102,66 @@ private struct ProvidersSettingsView: View {
         } catch {
             fetchModelsError = "Could not reach Ollama at that URL."
         }
+    }
+}
+
+private struct ProviderConnectionStatusRow: View {
+    let provider: CoachProviderKind
+    let connection: CoachProviderConnection?
+    let hasStoredKey: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.primary)
+                .frame(width: 30, height: 30)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(provider.label)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Text(status)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(statusColor)
+                .lineLimit(1)
+        }
+        .padding(.vertical, 3)
+    }
+
+    private var systemImage: String {
+        switch provider {
+        case .openRouter: return "sparkles"
+        case .ollama: return "desktopcomputer"
+        }
+    }
+
+    private var status: String {
+        if connection != nil { return "BYOK" }
+        if hasStoredKey { return "Manual" }
+        return "Not connected"
+    }
+
+    private var statusColor: Color {
+        if connection != nil { return .green }
+        if hasStoredKey { return .secondary }
+        return .secondary
+    }
+
+    private var detail: String {
+        if let connection {
+            return "\(connection.keyLabel) · \(connection.connectedAt.formatted(date: .abbreviated, time: .shortened))"
+        }
+        if hasStoredKey { return "A key is stored in Keychain." }
+        return "No provider key stored."
     }
 }
 
