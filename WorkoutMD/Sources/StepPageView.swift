@@ -199,22 +199,25 @@ private struct SetGestureLayer: View {
     }
 }
 
-/// The one interactive control in the runner: a round glass thumb riding over a subtle glass
-/// track/capsule — the track has NO text labels and NO direction glyph on it, it's purely a visible
-/// container so the control doesn't read as a bare floating button. It is a PERSISTENT 3-state
-/// control, live on every page, always — but unlike earlier revisions, it never rests off-center:
-/// whatever `state` is, the thumb always shows at dead-center bottom, and that state is conveyed
-/// purely by the thumb's icon + tint (`.pending` a minimal neutral dot — deliberately NOT a
-/// left-right-arrows glyph, which read as an instructional label — `.done` green checkmark,
-/// `.skipped` amber ✕). Sliding it past `armThreshold` either side commits a new state and springs
-/// the thumb straight back to center to show it; a plain tap (negligible movement) instead opens the
-/// effort prompt via `onTapEffort`.
+/// The one interactive control in the runner, rebuilt to look/behave like iOS's slide-to-power-off:
+/// a round glass knob riding snugly inside a glass pill that HUGS it (`trackHeight` = `size` + ~8pt
+/// of inset, not a big track around a tiny button). Unlike the previous revision, the drag gesture is
+/// attached to the ENTIRE pill (see `dragSurface`), not just the small knob circle — you can grab and
+/// drag from anywhere on the track. It is a PERSISTENT 3-state control, live on every page, always —
+/// it never rests off-center: whatever `state` is, the knob always shows at dead-center, and that
+/// state is conveyed purely by the knob's icon + tint (`.pending` a minimal neutral grip handle —
+/// deliberately NOT a left-right-arrows glyph, which read as an instructional label — `.done` green
+/// checkmark, `.skipped` amber ✕). Sliding it past `armThreshold` either side commits a new state and
+/// springs the knob straight back to center to show it; a plain tap (negligible movement) instead
+/// opens the effort prompt via `onTapEffort`.
+///
+/// A subtle shimmering "slide" hint sits in the track behind the knob (only while `state == .pending`,
+/// so it never fights the committed ✓/✕ tint) and fades out the moment a drag starts.
 ///
 /// The track (and the slide travel riding over it) spans roughly 80% of the page's width (read live
 /// via the enclosing `GeometryReader`, not a fixed constant) so left = skip / right = done have a
 /// long, comfortable throw — previously this travel was a fixed ~184pt, only about a third of most
-/// screens. The track is purely decorative (`allowsHitTesting(false)`): all gesture recognizers stay
-/// attached to the thumb circle only, so it doesn't change any touch handling.
+/// screens.
 ///
 /// The `DragGesture` is attached with `.simultaneousGesture`, never `.gesture` — that's load-bearing.
 /// `.gesture` lets a child's recognizer win exclusively over an ancestor's (which is how buttons work
@@ -222,9 +225,9 @@ private struct SetGestureLayer: View {
 /// steal from is the native paging `ScrollView` itself. `.simultaneousGesture` runs both recognizers
 /// concurrently, and this view separately keys off `axis` (locked in once the drag's translation is
 /// unambiguously horizontal- vs. vertical-dominant, past `axisLockDistance`) to decide whether it has
-/// any opinion at all: a vertical-dominant drag — including one that starts right on top of the
-/// thumb — never moves it and fires no haptic, so the page behind it pages away exactly as if the
-/// thumb weren't there. Verified on-device: vertical swipes starting on the thumb still page.
+/// any opinion at all: a vertical-dominant drag — including one that starts anywhere on the pill —
+/// never moves the knob and fires no haptic, so the page behind it pages away exactly as if the pill
+/// weren't there. Verified on-device: vertical swipes starting on the track still page.
 ///
 /// A separate `TapGesture`, also `.simultaneousGesture`, handles the tap-for-effort path: SwiftUI's
 /// tap recognizer only succeeds within a small system movement tolerance, so a real committing drag
@@ -243,7 +246,7 @@ private struct DoneSkipThumb: View {
 
     /// Live horizontal offset from center while a horizontal drag is in progress; always animates
     /// back to 0 once released — the thumb never rests anywhere but dead-center (state is shown by
-    /// icon + tint instead, see `glassStyle`/`icon`).
+    /// icon + tint instead, see `knobFillColor`/`icon`).
     @State private var dragTranslation: CGFloat = 0
     @State private var axis: DragAxis?
     /// The state the thumb is provisionally previewing mid-drag (nil = just showing `state`), only
@@ -257,14 +260,14 @@ private struct DoneSkipThumb: View {
     @State private var trackWidth: CGFloat = 320
 
     private let axisLockDistance: CGFloat = 8
-    /// Thumb diameter — 20% larger than the original 60pt design (72pt), while staying well above
+    /// Knob diameter — 20% larger than the original 60pt design (72pt), while staying well above
     /// the 44pt HIG minimum tap target.
     private let size: CGFloat = 72
     /// The slide track spans ~80% of the page width.
     private let trackWidthFraction: CGFloat = 0.8
-    /// The visible glass track's height — shorter than the thumb so the thumb reads as riding "on
-    /// top of" it, matching a Liquid Glass slider silhouette.
-    private let trackHeight: CGFloat = 44
+    /// The visible glass pill's height: knob diameter + ~8pt of inset, so the knob sits snug inside
+    /// it (slide-to-power-off silhouette) rather than a big track around a tiny button.
+    private let trackHeight: CGFloat = 80
     /// Fraction of `maxTravel` a drag must cross to arm a commit — matches the old 64/92 ratio.
     private let armThresholdFraction: CGFloat = 0.68
 
@@ -273,70 +276,157 @@ private struct DoneSkipThumb: View {
 
     private var displayState: SetState { provisional ?? state }
 
+    /// The shimmering "slide" hint fades out fast once a drag starts moving the knob, and never
+    /// shows at all once the set is already committed (so it doesn't fight the ✓/✕ tint at rest).
+    private var hintOpacity: Double {
+        guard state == .pending else { return 0 }
+        return max(0, 1 - Double(abs(dragTranslation)) / 40)
+    }
+
     var body: some View {
         GeometryReader { geo in
-            // Per the Liquid Glass guidelines, sibling glass shapes belong inside a single
-            // `GlassEffectContainer` (rather than as standalone `.glassEffect()` views) — it lets
-            // the thumb visually blend into the track as it rides near it, and is the recommended
-            // way to render/perform multiple glass elements together.
-            GlassEffectContainer(spacing: 20) {
-                ZStack {
-                    // Visible glass track/container — no labels, no direction glyph, just a subtle
-                    // rounded capsule so the control reads as a slider rather than a bare floating
-                    // button. Purely decorative: it never participates in hit testing.
-                    Capsule()
-                        .fill(.clear)
-                        .frame(width: trackWidth * trackWidthFraction, height: trackHeight)
-                        .glassEffect(.regular, in: .capsule)
-                        .allowsHitTesting(false)
+            dragSurface
+                .frame(width: geo.size.width, height: trackHeight)
+                .onAppear { trackWidth = geo.size.width }
+                .onChange(of: geo.size.width) { _, newValue in trackWidth = newValue }
+        }
+        .frame(height: trackHeight)
+    }
 
-                    Circle()
-                        .fill(.clear)
-                        .frame(width: size, height: size)
-                        .glassEffect(glassStyle, in: .circle)
-                        .overlay {
-                            if let icon {
-                                Image(systemName: icon)
-                                    .font(.system(size: 24, weight: .bold))
-                                    .foregroundStyle(.white)
-                                    .contentTransition(.symbolEffect(.replace))
-                            } else {
-                                // `.pending` shows a minimal, neutral dot — not a direction glyph.
-                                Circle()
-                                    .fill(Color.white.opacity(0.55))
-                                    .frame(width: 9, height: 9)
-                            }
-                        }
-                        .offset(x: dragTranslation)
-                        .allowsHitTesting(!isSettling)
-                        .simultaneousGesture(drag)
-                        .simultaneousGesture(TapGesture().onEnded { handleTap() })
-                        .accessibilityLabel("Set status: \(accessibilityStateName)")
-                        .accessibilityHint("Tap to rate effort. Drag right to mark done, left to mark skipped.")
+    /// The whole pill IS the drag surface — the `DragGesture`/`TapGesture` are attached here, at the
+    /// full track's width/height, rather than to the small knob circle, so grabbing anywhere on the
+    /// glass pill (not just the ~72pt knob) starts the slide. `.contentShape(Capsule())` makes the
+    /// full rounded-rect region hit-testable even though the track itself paints as translucent glass.
+    ///
+    /// IMPORTANT: the glass track and the solid knob are deliberately NOT siblings inside the same
+    /// `GlassEffectContainer` — a `GlassEffectContainer` shares one offscreen compositing pass across
+    /// everything inside it so its `.glassEffect()` shapes can morph/blend together, and empirically
+    /// that pass was also smearing the plain solid knob `Circle()` into a soft, blurry, low-contrast
+    /// blob (confirmed on-device) even though the knob itself declared no `.glassEffect`. The track's
+    /// `GlassEffectContainer` below wraps ONLY the capsule, so it has nothing to blend with and stays
+    /// a normal frosted pill; the knob is a fully separate sibling layered on top of it in `body`'s
+    /// outer `ZStack`, immune to that compositing pass — solid, opaque, crisp in every state.
+    private var dragSurface: some View {
+        ZStack {
+            // Plain, CRISP translucent track — deliberately NOT `.glassEffect`/`GlassEffectContainer`.
+            // The iOS 26 Liquid Glass compositing pass was smearing the entire control (track AND the
+            // solid knob) into a soft, blurry, low-contrast blob on-device. A hand-drawn frosted capsule
+            // (flat translucent fill + hairline stroke) renders sharp at any size with zero blur.
+            Capsule()
+                .fill(Color.white.opacity(0.08))
+                .overlay(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
+                .frame(width: trackWidth * trackWidthFraction, height: trackHeight)
+
+            hint
+
+            knob
+                .offset(x: dragTranslation)
+        }
+        .frame(width: trackWidth * trackWidthFraction, height: trackHeight)
+        .contentShape(Capsule())
+        .allowsHitTesting(!isSettling)
+        .simultaneousGesture(drag)
+        .simultaneousGesture(TapGesture().onEnded { handleTap() })
+        .accessibilityLabel("Set status: \(accessibilityStateName)")
+        .accessibilityHint("Tap to rate effort. Drag right to mark done, left to mark skipped.")
+    }
+
+    /// The knob itself: a CRISP, fully OPAQUE, solid-filled circle in every state, including
+    /// `.pending` at rest — deliberately NOT `.glassEffect`/a translucent material (that rendered as
+    /// a soft, low-contrast, nearly-invisible blur against the dark background, both from a tinted
+    /// glass fill AND from sharing a `GlassEffectContainer` with the track, see `dragSurface`'s doc
+    /// comment). Only a small, tight drop shadow gives it lift; the fill is a flat vector color per
+    /// state and the ✓/skip glyphs are plain SF Symbols with a flat stroke color — nothing here can
+    /// blur or band, and it always reads as an obvious, tappable, sharp knob sitting in the track.
+    private var knob: some View {
+        Circle()
+            .fill(knobFillColor)
+            .overlay(Circle().strokeBorder(Color.black.opacity(0.08), lineWidth: 0.5))
+            .frame(width: size, height: size)
+            .shadow(color: .black.opacity(0.35), radius: 5, x: 0, y: 3)
+            .overlay {
+                if let icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 24, weight: .bold))
+                        .foregroundStyle(iconTint)
+                        .contentTransition(.symbolEffect(.replace))
+                } else {
+                    // `.pending` shows a minimal, neutral grip handle — not a direction glyph.
+                    pendingGrip
                 }
-                .frame(width: geo.size.width, height: size)
             }
-            .onAppear { trackWidth = geo.size.width }
-            .onChange(of: geo.size.width) { _, newValue in trackWidth = newValue }
-        }
-        .frame(height: size)
     }
 
-    private var glassStyle: Glass {
+    /// Two subtle vertical bars — a minimal "grip" affordance, like a drag handle, shown only while
+    /// the knob is neutral/pending (never overlaid on the ✓/✕ glyphs). Dark-on-light, matching the
+    /// light neutral knob fill (see `knobFillColor`).
+    private var pendingGrip: some View {
+        HStack(spacing: 4) {
+            Capsule().fill(Color.black.opacity(0.28)).frame(width: 3, height: 20)
+            Capsule().fill(Color.black.opacity(0.28)).frame(width: 3, height: 20)
+        }
+    }
+
+    /// A quiet shimmering "slide" label sitting in the track behind the knob, like iOS's "slide to
+    /// power off" — a moving highlight band sweeps across the text continuously via `TimelineView`,
+    /// and the whole label fades out (`hintOpacity`) the moment a drag begins.
+    private var hint: some View {
+        TimelineView(.animation) { timeline in
+            let period = 2.4
+            let t = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period
+            let phase = CGFloat(t) * 2.6 - 0.8 // sweeps roughly -0.8...1.8 across the text
+            Text("slide")
+                .font(.subheadline.weight(.semibold))
+                .tracking(3)
+                .textCase(.uppercase)
+                .foregroundStyle(
+                    LinearGradient(
+                        stops: [
+                            .init(color: .white.opacity(0.28), location: phase - 0.35),
+                            .init(color: .white.opacity(0.95), location: phase),
+                            .init(color: .white.opacity(0.28), location: phase + 0.35),
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+        }
+        .frame(width: trackWidth * trackWidthFraction)
+        .opacity(hintOpacity)
+        .allowsHitTesting(false)
+    }
+
+    /// Flat, solid per-state knob fill — a light neutral for `.pending` (grip handle reads dark on
+    /// it), a clean pastel green for `.done`, a clean pastel amber for `.skipped`. No gradients-through-
+    /// translucency, no material tint: a single opaque color renders sharp at any size.
+    private var knobFillColor: Color {
         switch displayState {
-        case .pending: return .regular.interactive()
-        case .done: return .regular.tint(Color.green.opacity(0.85)).interactive()
-        case .skipped: return .regular.tint(Color.orange.opacity(0.85)).interactive()
+        case .pending: return Color.white
+        case .done: return Color(red: 0.486, green: 0.894, blue: 0.608)
+        case .skipped: return Color(red: 1.0, green: 0.824, blue: 0.478)
         }
     }
 
-    /// `nil` for `.pending` — rendered as a minimal dot instead of a glyph (see `body`), deliberately
-    /// NOT the old ↔ left-right-arrows icon, which read as an unwanted instructional label.
+    /// The ✓/skip glyph's flat stroke color — dark-on-light to stay legible against the light,
+    /// opaque `knobFillColor` (unused for `.pending`, which shows `pendingGrip` instead).
+    private var iconTint: Color {
+        switch displayState {
+        case .done: return Color(red: 0.039, green: 0.490, blue: 0.200)
+        case .skipped, .pending: return Color(red: 0.541, green: 0.353, blue: 0.0)
+        }
+    }
+
+    /// `nil` for `.pending` — rendered as a minimal grip handle instead of a glyph (see `body`),
+    /// deliberately NOT the old ↔ left-right-arrows icon, which read as an unwanted instructional
+    /// label. While actively being dragged left (`axis == .horizontal`, not yet committed/settled),
+    /// `.skipped` previews as a forward/skip glyph rather than the committed ✕ — the moment the drag
+    /// resolves (`axis` resets to `nil`, see `resolve()`), it settles into the final ✕ so the at-rest
+    /// state always matches how a skipped set reads everywhere else in the app.
     private var icon: String? {
         switch displayState {
         case .pending: return nil
         case .done: return "checkmark"
-        case .skipped: return "xmark"
+        case .skipped: return axis == .horizontal ? "forward.fill" : "xmark"
         }
     }
 
@@ -422,9 +512,22 @@ private struct DoneSkipThumb: View {
 /// reflected immediately, matching the pattern the old bottom-toolbar reps stepper used. Edits land
 /// in the same live `steps` array the coach's `adjust_set` tool mutates, so they persist into the
 /// logged "actual" set once the session finishes.
+///
+/// Tapping the VALUE itself (as opposed to the − / + glyph buttons) instead opens `NumericEntryPopup`
+/// — a small sheet with a real numeric keyboard — so the athlete can type an exact value rather than
+/// tapping + repeatedly. Both paths (steppers and the popup) funnel through the same
+/// `adjustReps`/`adjustWeight` setters on `WorkoutSession`, computing a delta from the typed absolute
+/// value, so there's exactly one mutation path per field.
 private struct FloatingTargetRows: View {
     @Environment(WorkoutSession.self) private var session
     let stepID: WorkoutStep.ID
+
+    private enum EditingField: Identifiable {
+        case reps, weight
+        var id: Self { self }
+    }
+
+    @State private var editingField: EditingField?
 
     private var target: SetTarget {
         guard let idx = session.steps.firstIndex(where: { $0.id == stepID }),
@@ -447,22 +550,59 @@ private struct FloatingTargetRows: View {
         // leading-aligned VStack, then `alignment: .center` centers the rows (and each other, when
         // their widths differ) within that.
         VStack(alignment: .center, spacing: 8) {
-            FloatingStepRow(value: reps, unit: "reps") { delta in
-                Haptics.selection()
-                session.adjustReps(forStepID: stepID, delta: delta)
-            }
-
-            if weight != nil {
-                FloatingStepRow(value: Int(weight ?? 0), unit: "lb", step: 5) { delta in
+            FloatingStepRow(
+                displayValue: Double(reps),
+                formattedText: "\(reps)",
+                unit: "reps",
+                onAdjust: { delta in
                     Haptics.selection()
-                    session.adjustWeight(forStepID: stepID, delta: Double(delta))
-                }
+                    session.adjustReps(forStepID: stepID, delta: Int(delta))
+                },
+                onTapValue: { editingField = .reps }
+            )
+
+            if let weight {
+                FloatingStepRow(
+                    displayValue: weight,
+                    formattedText: Self.formatWeight(weight),
+                    unit: "lb",
+                    step: 5,
+                    onAdjust: { delta in
+                        Haptics.selection()
+                        session.adjustWeight(forStepID: stepID, delta: delta)
+                    },
+                    onTapValue: { editingField = .weight }
+                )
             }
         }
         .frame(maxWidth: .infinity, alignment: .center)
         // Always interactive — a set already marked done or skipped is still fully editable, so the
         // athlete can page back and fix the weight/reps after the fact without unmarking anything.
         .accessibilityElement(children: .contain)
+        .sheet(item: $editingField) { field in
+            switch field {
+            case .reps:
+                NumericEntryPopup(title: "Reps", initialValue: Double(reps), unit: "reps", allowsDecimal: false) { newValue in
+                    let delta = Int(newValue.rounded()) - reps
+                    if delta != 0 {
+                        Haptics.selection()
+                        session.adjustReps(forStepID: stepID, delta: delta)
+                    }
+                }
+            case .weight:
+                NumericEntryPopup(title: "Weight", initialValue: weight ?? 0, unit: "lb", allowsDecimal: true) { newValue in
+                    let delta = newValue - (weight ?? 0)
+                    if delta != 0 {
+                        Haptics.selection()
+                        session.adjustWeight(forStepID: stepID, delta: delta)
+                    }
+                }
+            }
+        }
+    }
+
+    private static func formatWeight(_ value: Double) -> String {
+        value.truncatingRemainder(dividingBy: 1) == 0 ? "\(Int(value))" : String(format: "%.1f", value)
     }
 }
 
@@ -473,34 +613,123 @@ private struct FloatingTargetRows: View {
 /// one) so it never grows lopsided room to one side as digit count changes — that asymmetry is
 /// what used to visually drag the whole "12 reps" cluster (and therefore the number itself) left
 /// of screen-center once the row was centered by its parent, since the minus/plus glyph buttons
-/// are equal-width and equally spaced either side of this block.
+/// are equal-width and equally spaced either side of this block. Tapping that block (rather than
+/// dragging or tapping the ± buttons) opens the numeric keypad popup via `onTapValue`.
 private struct FloatingStepRow: View {
-    let value: Int
+    let displayValue: Double
+    let formattedText: String
     let unit: String
-    var step: Int = 1
-    var onAdjust: (Int) -> Void
+    var step: Double = 1
+    var onAdjust: (Double) -> Void
+    var onTapValue: () -> Void
 
     var body: some View {
         HStack(spacing: 22) {
             GlyphButton(symbol: "minus", label: "Decrease \(unit)") { onAdjust(-step) }
 
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
-                Text("\(value)")
-                    .font(.system(size: 34, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                    .contentTransition(.numericText(value: Double(value)))
-                Text(unit)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.6))
+            Button(action: onTapValue) {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text(formattedText)
+                        .font(.system(size: 34, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .contentTransition(.numericText(value: displayValue))
+                    Text(unit)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.6))
+                }
+                .foregroundStyle(.white)
+                .frame(minWidth: 90, alignment: .center)
+                .contentShape(Rectangle())
             }
-            .foregroundStyle(.white)
-            .frame(minWidth: 90, alignment: .center)
-            .animation(.snappy, value: value)
+            .buttonStyle(.plain)
+            .animation(.snappy, value: displayValue)
+            .accessibilityLabel("\(unit) value")
+            .accessibilityHint("Double tap to type an exact value")
 
             GlyphButton(symbol: "plus", label: "Increase \(unit)") { onAdjust(step) }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityValue("\(value) \(unit)")
+        .accessibilityValue("\(formattedText) \(unit)")
+    }
+}
+
+/// A small sheet with a real numeric keyboard for typing an exact reps/weight value, opened by
+/// tapping the value in `FloatingStepRow`. Reps use `.numberPad` (whole numbers only); weight uses
+/// `.decimalPad` (`allowsDecimal`) so fractional plates (e.g. "47.5") can be entered. The field
+/// auto-focuses the moment the sheet appears so the keyboard shows immediately, and both the
+/// keyboard's return key and a "Done" button commit — `onCommit` reports the typed absolute value,
+/// and the caller (`FloatingTargetRows`) converts it into a delta for the same `adjustReps`/
+/// `adjustWeight` setters the − / + steppers use.
+private struct NumericEntryPopup: View {
+    let title: String
+    let initialValue: Double
+    let unit: String
+    let allowsDecimal: Bool
+    var onCommit: (Double) -> Void
+
+    @State private var text: String
+    @FocusState private var isFocused: Bool
+    @Environment(\.dismiss) private var dismiss
+
+    init(title: String, initialValue: Double, unit: String, allowsDecimal: Bool, onCommit: @escaping (Double) -> Void) {
+        self.title = title
+        self.initialValue = initialValue
+        self.unit = unit
+        self.allowsDecimal = allowsDecimal
+        self.onCommit = onCommit
+        _text = State(initialValue: allowsDecimal
+            ? (initialValue.truncatingRemainder(dividingBy: 1) == 0 ? "\(Int(initialValue))" : String(format: "%.1f", initialValue))
+            : "\(Int(initialValue))")
+    }
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Capsule()
+                .fill(.secondary.opacity(0.35))
+                .frame(width: 36, height: 5)
+                .padding(.top, 8)
+
+            Text(title)
+                .font(.title3.weight(.bold))
+
+            HStack(spacing: 6) {
+                TextField("Value", text: $text)
+                    .keyboardType(allowsDecimal ? .decimalPad : .numberPad)
+                    .focused($isFocused)
+                    .font(.system(size: 40, weight: .bold, design: .rounded))
+                    .multilineTextAlignment(.center)
+                    .fixedSize()
+                    .onSubmit(commit)
+                Text(unit)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 20)
+
+            Button("Done", action: commit)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .padding(.horizontal, 40)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.bottom, 12)
+        .task {
+            // A tiny defer past `onAppear` so the sheet's presentation transition has started before
+            // the keyboard slides up — avoids a race where focusing too early no-ops on some devices.
+            try? await Task.sleep(nanoseconds: 80_000_000)
+            isFocused = true
+        }
+        .presentationDetents([.height(280)])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func commit() {
+        let sanitized = text.replacingOccurrences(of: ",", with: ".")
+        if let value = Double(sanitized) {
+            onCommit(max(0, value))
+        }
+        dismiss()
     }
 }
 
