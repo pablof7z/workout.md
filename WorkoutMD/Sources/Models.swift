@@ -119,6 +119,11 @@ struct SetPageInfo {
     let totalRounds: Int?
     let miniMap: [MiniMapItem]?
     var skipped: Bool = false
+    /// Set via the gesture bar's DONE commit — the active set's reps/weight/effort at the moment of
+    /// commit become the logged "actual". Mutually exclusive with `skipped` in practice (a set is
+    /// either logged done or skipped, never both), but each flag is independent so a stray coach
+    /// tool call can't leave both `false` in an inconsistent way.
+    var completed: Bool = false
 }
 
 struct RestPageInfo {
@@ -199,7 +204,16 @@ struct SessionSummary {
 @Observable
 final class WorkoutSession {
     var steps: [WorkoutStep]
+    /// The ACTIVE pointer — the next set to log. Only a horizontal DONE/SKIP commit on the gesture
+    /// bar advances this (and logs/skips the set it points past). Coach tooling, `coachContext`, and
+    /// the plan editor all reason about "the current set" in terms of this pointer, unchanged from
+    /// before the gesture rework.
     var currentStepID: WorkoutStep.ID?
+    /// The VIEW pointer — the step currently rendered by the runner's pager. Decoupled from
+    /// `currentStepID` so a pure-vertical drag can page ahead to *preview* upcoming sets without
+    /// logging anything. Starts equal to `currentStepID`; a DONE/SKIP commit snaps it back in sync
+    /// (see `advanceActive()`).
+    var viewStepID: WorkoutStep.ID?
     /// Committed effort per set, as RPE 6–10.
     var rpe: [WorkoutStep.ID: Double] = [:]
     /// Coach transcript per exercise name.
@@ -232,6 +246,7 @@ final class WorkoutSession {
         self.steps = steps
         self.prescribedSteps = steps
         self.currentStepID = steps.first?.id
+        self.viewStepID = steps.first?.id
         self.activePlan = activePlan
         self.modelContext = modelContext
     }
@@ -246,6 +261,24 @@ final class WorkoutSession {
     var currentStep: WorkoutStep? {
         guard let idx = currentIndex else { return nil }
         return steps[idx]
+    }
+
+    /// Index of the step currently displayed by the pager (may be ahead of `currentIndex` while
+    /// previewing).
+    var viewIndex: Int? {
+        guard let viewStepID else { return nil }
+        return steps.firstIndex { $0.id == viewStepID }
+    }
+
+    var viewStep: WorkoutStep? {
+        guard let idx = viewIndex else { return nil }
+        return steps[idx]
+    }
+
+    /// True once the view has paged ahead of the active set without a DONE/SKIP commit — drives the
+    /// runner's "Previewing — not logged" chip and allows dragging back down toward the active set.
+    var isPreviewing: Bool {
+        viewStepID != nil && viewStepID != currentStepID
     }
 
     /// The exercise the coach is scoped to: the current set's exercise, or for a rest page the
@@ -302,7 +335,50 @@ final class WorkoutSession {
         guard let idx = steps.firstIndex(where: { $0.id == id }),
               case .set(var info) = steps[idx].page else { return }
         info.skipped = true
+        info.completed = false
         steps[idx].page = .set(info)
+    }
+
+    // MARK: Gesture bar — DONE / SKIP commit and PEEK (viewIndex vs activeIndex)
+
+    /// The gesture bar's DONE commit: marks the active set's CURRENT reps/weight/effort (already
+    /// live in `steps` from the floating +/- rows and the effort dial) as the logged "actual".
+    /// Mirrors `skip(stepID:)`.
+    func complete(stepID id: WorkoutStep.ID) {
+        guard let idx = steps.firstIndex(where: { $0.id == id }),
+              case .set(var info) = steps[idx].page else { return }
+        info.completed = true
+        info.skipped = false
+        steps[idx].page = .set(info)
+    }
+
+    /// Advances BOTH the active and view pointers to the next step. Called after a DONE/SKIP commit
+    /// has already logged/skipped the set at the old `currentStepID` — this is the "viewIndex snaps
+    /// to the new activeIndex" half of the contract. A no-op past the last step (the runner treats
+    /// committing the last step as a Finish instead).
+    func advanceActive() {
+        guard let idx = currentIndex, idx < steps.count - 1 else { return }
+        let next = steps[idx + 1].id
+        currentStepID = next
+        viewStepID = next
+    }
+
+    /// Pages the VIEW forward one step WITHOUT touching the active pointer — the PEEK gesture (a
+    /// pure vertical drag past the peek threshold). Returns `false` (no-op) at the last step.
+    @discardableResult
+    func peekForward() -> Bool {
+        guard let idx = viewIndex, idx < steps.count - 1 else { return false }
+        viewStepID = steps[idx + 1].id
+        return true
+    }
+
+    /// Pages the VIEW back one step, never past the active set — dragging down while previewing.
+    /// Returns `false` (no-op) once the view is back in sync with the active pointer.
+    @discardableResult
+    func peekBackward() -> Bool {
+        guard let idx = viewIndex, let activeIdx = currentIndex, idx > activeIdx else { return false }
+        viewStepID = steps[idx - 1].id
+        return true
     }
 
     // MARK: Live coach — streaming transcript
@@ -549,6 +625,7 @@ final class WorkoutSession {
             return message
         }
         info.skipped = true
+        info.completed = false
         steps[stepIdx].page = .set(info)
 
         let confirmation = "\(exercise) set \(setIndex + 1): skipped."
