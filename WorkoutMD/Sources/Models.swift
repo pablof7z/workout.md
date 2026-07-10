@@ -119,6 +119,10 @@ struct SetPageInfo {
     let totalRounds: Int?
     let miniMap: [MiniMapItem]?
     var skipped: Bool = false
+    /// Set once the athlete slides the runner's thumb right (see `WorkoutSession.complete(active:)`).
+    /// Mirrors `skipped`'s role for the SKIPPED badge — drives the analogous DONE badge in
+    /// `StepPageView` so a page you've paged back to (peeking) still visibly reads as logged.
+    var completed: Bool = false
 }
 
 struct RestPageInfo {
@@ -199,7 +203,18 @@ struct SessionSummary {
 @Observable
 final class WorkoutSession {
     var steps: [WorkoutStep]
-    var currentStepID: WorkoutStep.ID?
+    /// The ACTIVE pointer: the next set the athlete must log (done or skip). This is what the
+    /// runner's thumb gesture (`complete(active:)`/`skip(active:)`/`advanceActive()`) advances, and
+    /// what the coach, `coachContext`, and `PlanEditInterpreter` all reason about as "current" — it
+    /// only ever moves forward, one commit at a time, regardless of where the pager is scrolled to.
+    var activeStepID: WorkoutStep.ID?
+    /// The VIEW pointer: whichever page the native paging `ScrollView` is currently showing, bound
+    /// via `.scrollPosition(id:)` in `RunnerView`. Scrolling anywhere (including past `activeStepID`
+    /// in either direction) only ever moves this — it's a peek, never a commit. `RunnerView` sets
+    /// this directly (not through a binding write) when a thumb commit advances the active pointer,
+    /// so SwiftUI can animate the native page transition; nothing here drives the scroll offset by
+    /// hand mid-drag.
+    var viewStepID: WorkoutStep.ID?
     /// Committed effort per set, as RPE 6–10.
     var rpe: [WorkoutStep.ID: Double] = [:]
     /// Coach transcript per exercise name.
@@ -231,27 +246,38 @@ final class WorkoutSession {
     init(steps: [WorkoutStep] = [], activePlan: PlanRecord? = nil, modelContext: ModelContext? = nil) {
         self.steps = steps
         self.prescribedSteps = steps
-        self.currentStepID = steps.first?.id
+        self.activeStepID = steps.first?.id
+        self.viewStepID = steps.first?.id
         self.activePlan = activePlan
         self.modelContext = modelContext
     }
 
     // MARK: Lookups
 
-    var currentIndex: Int? {
-        guard let currentStepID else { return nil }
-        return steps.firstIndex { $0.id == currentStepID }
+    var activeIndex: Int? {
+        guard let activeStepID else { return nil }
+        return steps.firstIndex { $0.id == activeStepID }
     }
 
-    var currentStep: WorkoutStep? {
-        guard let idx = currentIndex else { return nil }
+    var activeStep: WorkoutStep? {
+        guard let idx = activeIndex else { return nil }
         return steps[idx]
     }
 
-    /// The exercise the coach is scoped to: the current set's exercise, or for a rest page the
-    /// next-up movement.
+    var viewIndex: Int? {
+        guard let viewStepID else { return nil }
+        return steps.firstIndex { $0.id == viewStepID }
+    }
+
+    var viewStep: WorkoutStep? {
+        guard let idx = viewIndex else { return nil }
+        return steps[idx]
+    }
+
+    /// The exercise the coach is scoped to: the ACTIVE set's exercise (not whatever the pager is
+    /// merely previewing), or for a rest page the next-up movement.
     var currentExerciseName: String? {
-        guard let step = currentStep else { return nil }
+        guard let step = activeStep else { return nil }
         switch step.page {
         case .set(let info): return info.exercise.name
         case .rest(let info): return info.nextUpName
@@ -296,13 +322,36 @@ final class WorkoutSession {
         steps[idx].page = .set(info)
     }
 
-    // MARK: Skip
+    // MARK: Done / Skip (the runner's thumb gesture — always targets the ACTIVE set)
 
-    func skip(stepID id: WorkoutStep.ID) {
+    /// Logs `id` (the active step) as done. Clears `skipped` in case a prior swipe had marked it
+    /// skipped before the athlete slid the thumb the other way on a re-peek.
+    func complete(active id: WorkoutStep.ID) {
+        guard let idx = steps.firstIndex(where: { $0.id == id }),
+              case .set(var info) = steps[idx].page else { return }
+        info.completed = true
+        info.skipped = false
+        steps[idx].page = .set(info)
+    }
+
+    /// Marks `id` (the active step) skipped for the rest of the session.
+    func skip(active id: WorkoutStep.ID) {
         guard let idx = steps.firstIndex(where: { $0.id == id }),
               case .set(var info) = steps[idx].page else { return }
         info.skipped = true
+        info.completed = false
         steps[idx].page = .set(info)
+    }
+
+    /// Moves `activeStepID` to the next step after a done/skip commit. Returns the new active id, or
+    /// `nil` when there's no next step (the athlete just resolved the last one) — the caller (the
+    /// runner's thumb) treats a `nil` return as "finish the workout" rather than trying to advance.
+    @discardableResult
+    func advanceActive() -> WorkoutStep.ID? {
+        guard let idx = activeIndex, idx + 1 < steps.count else { return nil }
+        let next = steps[idx + 1].id
+        activeStepID = next
+        return next
     }
 
     // MARK: Live coach — streaming transcript
@@ -389,12 +438,12 @@ final class WorkoutSession {
             var line = "- set_index \(setIndex): prescribed \(prescribed)"
             if info.skipped {
                 line += " — skipped"
-            } else if let idx = currentIndex, stepIdx < idx {
+            } else if let idx = activeIndex, stepIdx < idx {
                 line += " — done: \(info.exercise.target.displayString)"
                 if let r = rpe[steps[stepIdx].id] {
                     line += ", RPE \(String(format: "%.1f", r))"
                 }
-            } else if stepIdx == currentIndex {
+            } else if stepIdx == activeIndex {
                 line += " — current set"
                 if let r = rpe[steps[stepIdx].id] {
                     line += ", RPE \(String(format: "%.1f", r))"
@@ -624,8 +673,10 @@ final class WorkoutSession {
             if case .set = $0.page { return true }
             return false
         }
+        // `completed` (set by the thumb's DONE slide) is the authoritative "actually logged" signal
+        // now that done/skip are explicit commits rather than inferred from having paged past a set.
         let logged = setSteps.filter {
-            if case .set(let info) = $0.page { return !info.skipped }
+            if case .set(let info) = $0.page { return info.completed }
             return false
         }.count
         let values = setSteps.compactMap { rpe[$0.id] }

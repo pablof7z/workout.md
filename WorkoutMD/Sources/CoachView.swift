@@ -19,7 +19,7 @@ struct CoachView: View {
     @FocusState private var inputFocused: Bool
 
     private var exerciseName: String { session.currentExerciseName ?? "This exercise" }
-    private var moodKey: MoodKey { session.currentStep?.moodKey ?? .rest }
+    private var moodKey: MoodKey { session.activeStep?.moodKey ?? .rest }
     private var messages: [CoachMessage] { session.transcript(for: exerciseName) }
 
     /// True once the currently-selected provider has a credential to actually talk to — `openRouter`

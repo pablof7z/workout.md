@@ -137,7 +137,7 @@ enum PlanEditInterpreter {
     }
 
     private static func adjustVolumeInSession(_ lower: String, direction: VolumeDirection, session: WorkoutSession) {
-        guard let currentIndex = session.currentIndex else { return }
+        guard let currentIndex = session.activeIndex else { return }
         // Only touch not-yet-reached sets, walking backwards so repeated removals/insertions don't
         // shift not-yet-visited indices out from under the loop.
         var i = session.steps.count - 1

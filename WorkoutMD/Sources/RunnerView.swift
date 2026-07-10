@@ -11,7 +11,11 @@ import SwiftUI
 /// - The floating glass controls float as `.overlay`s over the current page (never `.safeAreaInset`,
 ///   which would shrink the scroll container and break the stride).
 ///
-/// Advancing between sets is a SWIPE DOWN (the vertical paging) — there is no Log & Next button.
+/// Vertical swipe (the native paging) is now a PEEK, not a commit: it moves `session.viewStepID`
+/// (what's on screen) without touching `session.activeStepID` (the set that still needs logging) —
+/// see `WorkoutSession` for the two pointers. Committing a set is the round thumb living inside each
+/// `StepPageView`, near the bottom: slide it right for done, left for skip. There is no Log & Next
+/// button and (after this pass) no Skip button either.
 struct RunnerView: View {
     /// Sizing for the floating `TopContextStrip` pill, shared with `StepPageView` so its `topReserve`
     /// can be derived from the pill's *actual* rendered geometry instead of a guessed constant.
@@ -39,6 +43,11 @@ struct RunnerView: View {
     var onFinish: (SessionSummary) -> Void
 
     @State private var showingList = false
+    /// The effort dial's expanded state, lifted up here (rather than living inside `ControlsView`)
+    /// now that the dial is its own top-trailing `.overlay` below — see that overlay's comment for
+    /// why it moved out of the bottom row entirely (it can't share the thumb's row without risking
+    /// an overlap during the thumb's commit fly-out).
+    @State private var effortExpanded = false
 
     var body: some View {
         @Bindable var session = session
@@ -50,19 +59,24 @@ struct RunnerView: View {
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 0) {
                     ForEach(session.steps) { step in
-                        StepPageView(step: step, topInset: safeTop, bottomInset: safeBottom)
-                            .containerRelativeFrame([.horizontal, .vertical])
-                            .id(step.id)
+                        StepPageView(
+                            step: step,
+                            topInset: safeTop,
+                            bottomInset: safeBottom,
+                            onFinish: { onFinish(session.buildSummary()) }
+                        )
+                        .containerRelativeFrame([.horizontal, .vertical])
+                        .id(step.id)
                     }
                 }
                 .scrollTargetLayout()
             }
             .scrollTargetBehavior(.paging)
-            .scrollPosition(id: $session.currentStepID)
+            .scrollPosition(id: $session.viewStepID)
             .ignoresSafeArea()
             .overlay(alignment: .top) {
-                if let current = currentStep {
-                    TopContextStrip(step: current, stepIndex: currentIndex, totalSteps: session.steps.count) {
+                if let viewed = viewStep {
+                    TopContextStrip(step: viewed, stepIndex: viewIndex, totalSteps: session.steps.count) {
                         showingList = true
                     }
                     .padding(.top, TopStripMetrics.topOffset)
@@ -72,12 +86,27 @@ struct RunnerView: View {
                 CoachEdgeHint()
                     .padding(.leading, 4)
             }
+            .overlay(alignment: .topTrailing) {
+                // Deliberately top-trailing, not sharing the bottom row with the thumb — see
+                // `ControlsView`'s doc comment for why even an off-to-one-side placement in the
+                // thumb's row risks a momentary overlap during its commit fly-out, whereas a
+                // different corner entirely cannot, regardless of the thumb's travel distance.
+                if let viewed = viewStep, case .set = viewed.page {
+                    EffortControl(committed: session.rpe[viewed.id], expanded: $effortExpanded) { value in
+                        session.setEffort(value, for: viewed.id)
+                    }
+                    // Symmetric horizontal padding (not just `.trailing`) so the expanded scale —
+                    // which requests `maxWidth: .infinity` — insets evenly on both sides instead of
+                    // going flush to the leading edge; a fixed-size collapsed circle only "feels"
+                    // the trailing side of this anyway, since alignment does the positioning.
+                    .padding(.horizontal, 20)
+                    .padding(.top, TopStripMetrics.topOffset)
+                }
+            }
             .overlay(alignment: .bottom) {
-                if let current = currentStep {
+                if let viewed = viewStep {
                     ControlsView(
-                        step: current,
-                        isLast: isLastStep,
-                        onSkip: skip,
+                        isLast: isLastViewedStep,
                         onFinish: { onFinish(session.buildSummary()) }
                     )
                     // Same overlay-alignment quirk as the top pill (see `TopStripMetrics`): the
@@ -89,45 +118,37 @@ struct RunnerView: View {
         }
         .background(Color.black.ignoresSafeArea())
         .onAppear {
-            if session.currentStepID == nil {
-                session.currentStepID = session.steps.first?.id
+            if session.activeStepID == nil {
+                session.activeStepID = session.steps.first?.id
+            }
+            if session.viewStepID == nil {
+                session.viewStepID = session.steps.first?.id
             }
         }
         .sheet(isPresented: $showingList) {
             WorkoutListView(
                 workoutName: session.activePlan?.name ?? "Workout",
                 steps: session.steps,
-                currentID: session.currentStepID
+                currentID: session.viewStepID
             ) { id in
                 showingList = false
                 withAnimation(.easeInOut(duration: 0.35)) {
-                    session.currentStepID = id
+                    session.viewStepID = id
                 }
             }
         }
     }
 
-    private var currentIndex: Int {
-        session.currentIndex ?? 0
+    private var viewIndex: Int {
+        session.viewIndex ?? 0
     }
 
-    private var currentStep: WorkoutStep? {
-        session.currentStep ?? session.steps.first
+    private var viewStep: WorkoutStep? {
+        session.viewStep ?? session.steps.first
     }
 
-    private var isLastStep: Bool {
-        currentIndex == session.steps.count - 1
-    }
-
-    private func skip() {
-        guard let current = currentStep else { return }
-        session.skip(stepID: current.id)
-        if !isLastStep {
-            let next = session.steps[currentIndex + 1]
-            withAnimation(.easeInOut(duration: 0.35)) {
-                session.currentStepID = next.id
-            }
-        }
+    private var isLastViewedStep: Bool {
+        viewIndex == session.steps.count - 1
     }
 }
 
