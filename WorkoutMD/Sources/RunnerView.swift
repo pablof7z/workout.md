@@ -11,7 +11,11 @@ import SwiftUI
 /// - The floating glass controls float as `.overlay`s over the current page (never `.safeAreaInset`,
 ///   which would shrink the scroll container and break the stride).
 ///
-/// Advancing between sets is a SWIPE DOWN (the vertical paging) — there is no Log & Next button.
+/// Navigation is completely free: vertical swipe (the native paging) just moves `session.currentStepID`
+/// — there's no separate "active" pointer to advance, and no "previewing" state. Each `StepPageView`
+/// hosts its own persistent done/skip/pending slider (see `DoneSkipThumb`) that renders and mutates
+/// THAT set's own status, independent of the pager's position — so paging away and back always shows
+/// the set exactly how you left it, still slidable to any other state.
 struct RunnerView: View {
     /// Sizing for the floating `TopContextStrip` pill, shared with `StepPageView` so its `topReserve`
     /// can be derived from the pill's *actual* rendered geometry instead of a guessed constant.
@@ -50,9 +54,13 @@ struct RunnerView: View {
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 0) {
                     ForEach(session.steps) { step in
-                        StepPageView(step: step, topInset: safeTop, bottomInset: safeBottom)
-                            .containerRelativeFrame([.horizontal, .vertical])
-                            .id(step.id)
+                        StepPageView(
+                            step: step,
+                            topInset: safeTop,
+                            bottomInset: safeBottom
+                        )
+                        .containerRelativeFrame([.horizontal, .vertical])
+                        .id(step.id)
                     }
                 }
                 .scrollTargetLayout()
@@ -68,16 +76,10 @@ struct RunnerView: View {
                     .padding(.top, TopStripMetrics.topOffset)
                 }
             }
-            .overlay(alignment: .leading) {
-                CoachEdgeHint()
-                    .padding(.leading, 4)
-            }
             .overlay(alignment: .bottom) {
-                if let current = currentStep {
+                if currentStep != nil {
                     ControlsView(
-                        step: current,
                         isLast: isLastStep,
-                        onSkip: skip,
                         onFinish: { onFinish(session.buildSummary()) }
                     )
                     // Same overlay-alignment quirk as the top pill (see `TopStripMetrics`): the
@@ -118,17 +120,6 @@ struct RunnerView: View {
     private var isLastStep: Bool {
         currentIndex == session.steps.count - 1
     }
-
-    private func skip() {
-        guard let current = currentStep else { return }
-        session.skip(stepID: current.id)
-        if !isLastStep {
-            let next = session.steps[currentIndex + 1]
-            withAnimation(.easeInOut(duration: 0.35)) {
-                session.currentStepID = next.id
-            }
-        }
-    }
 }
 
 /// Small floating glass pill pinned to the top safe area showing where you are in the whole
@@ -165,23 +156,5 @@ private struct TopContextStrip: View {
         .contentShape(Rectangle())
         .accessibilityLabel("\(step.blockName), step \(stepIndex + 1) of \(totalSteps)")
         .accessibilityHint("Opens the full workout list")
-    }
-}
-
-/// A faint leading-edge hint that swiping right reveals the Coach screen. Purely decorative — the
-/// actual gesture is handled by the horizontal pager in `SessionView`.
-private struct CoachEdgeHint: View {
-    var body: some View {
-        VStack(spacing: 4) {
-            Image(systemName: "chevron.left")
-                .font(.caption.weight(.bold))
-            Text("Coach")
-                .font(.caption2.weight(.semibold))
-                .rotationEffect(.degrees(-90))
-                .fixedSize()
-                .frame(height: 44)
-        }
-        .foregroundStyle(.white.opacity(0.35))
-        .accessibilityHidden(true)
     }
 }

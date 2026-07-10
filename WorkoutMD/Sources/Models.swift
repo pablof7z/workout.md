@@ -107,6 +107,17 @@ enum StepPage {
     case rest(RestPageInfo)
 }
 
+/// A set's status, rendered persistently by that set's own slider (see `DoneSkipThumb` in
+/// `StepPageView.swift`) — every set carries its own independent `state`, regardless of which page
+/// the pager happens to be showing. There is no "active" set anymore: any set, past or future, can
+/// be sitting in any of these three states, and the athlete can slide it into any other at any time
+/// (e.g. mark a set done, page away, come back, and change it to skipped, or just fix the weight).
+enum SetState: Equatable {
+    case pending
+    case done
+    case skipped
+}
+
 struct SetPageInfo {
     var exercise: Exercise
     let setNumber: Int
@@ -118,7 +129,16 @@ struct SetPageInfo {
     let round: Int?
     let totalRounds: Int?
     let miniMap: [MiniMapItem]?
-    var skipped: Bool = false
+    /// The one and only status this set carries. Persisted on `WorkoutSession.steps` (a value-type
+    /// array), so it round-trips exactly like the rest of `SetPageInfo` and is what the runner's
+    /// per-page slider both renders and mutates.
+    var state: SetState = .pending
+
+    /// Back-compat read-only views for history/persistence/list code that still reasons in booleans
+    /// (`SetRecord.skipped`, `WorkoutListView`'s badge, etc.) — derived from `state`, never stored
+    /// separately, so the two can't drift.
+    var skipped: Bool { state == .skipped }
+    var completed: Bool { state == .done }
 }
 
 struct RestPageInfo {
@@ -199,6 +219,12 @@ struct SessionSummary {
 @Observable
 final class WorkoutSession {
     var steps: [WorkoutStep]
+    /// The ONE pointer: whichever page the native paging `ScrollView` is currently showing, bound via
+    /// `.scrollPosition(id:)` in `RunnerView`. Navigation is completely free — there is no separate
+    /// "active" set that gates it — so scrolling anywhere just moves this. Each set's done/skipped/
+    /// pending status lives independently on that set's own `SetPageInfo.state` (see `setState(_:for:)`
+    /// below), not on this pointer, which is why paging away and back never loses or "un-logs"
+    /// anything.
     var currentStepID: WorkoutStep.ID?
     /// Committed effort per set, as RPE 6–10.
     var rpe: [WorkoutStep.ID: Double] = [:]
@@ -248,8 +274,8 @@ final class WorkoutSession {
         return steps[idx]
     }
 
-    /// The exercise the coach is scoped to: the current set's exercise, or for a rest page the
-    /// next-up movement.
+    /// The exercise the coach is scoped to: whatever's currently on screen (navigation is free now,
+    /// so "current" just means "wherever the pager is"), or for a rest page the next-up movement.
     var currentExerciseName: String? {
         guard let step = currentStep else { return nil }
         switch step.page {
@@ -296,13 +322,38 @@ final class WorkoutSession {
         steps[idx].page = .set(info)
     }
 
-    // MARK: Skip
+    // MARK: Done / Skip (the runner's per-set thumb — always targets the set it lives on, whatever
+    // that set's current state, not some separate "active" pointer)
 
-    func skip(stepID id: WorkoutStep.ID) {
+    /// Sets `id`'s status directly. This is the ONLY mutation the runner's thumb performs, and it
+    /// works identically for every set — past, current, or future, already-logged or not. Sliding a
+    /// done set back to skipped, or a skipped set back to pending, or a long-past set's weight fixed
+    /// after the fact are all just this same call with a different `id`/`newState` pair.
+    func setState(_ newState: SetState, for id: WorkoutStep.ID) {
         guard let idx = steps.firstIndex(where: { $0.id == id }),
               case .set(var info) = steps[idx].page else { return }
-        info.skipped = true
+        info.state = newState
         steps[idx].page = .set(info)
+    }
+
+    /// The step immediately after `id` in `steps`, if any — the auto-advance target once a set
+    /// commits to `.done`/`.skipped` (see `advanceToNextStep(after:)` below).
+    func nextStepID(after id: WorkoutStep.ID) -> WorkoutStep.ID? {
+        guard let idx = steps.firstIndex(where: { $0.id == id }), idx + 1 < steps.count else { return nil }
+        return steps[idx + 1].id
+    }
+
+    /// Animates the native paging `ScrollView` (via its `.scrollPosition(id: $session.currentStepID)`
+    /// binding in `RunnerView`) to the set right after `id`, called once that set commits to
+    /// `.done`/`.skipped` — either by sliding `DoneSkipThumb` or by picking an effort value in the
+    /// tap-to-open prompt (see `StepPageView.SetGestureLayer`). A no-op past the last step. This
+    /// never fights the pager: it just moves the same `currentStepID` a normal swipe would, so the
+    /// user can always swipe back to re-edit any set afterward.
+    func advanceToNextStep(after id: WorkoutStep.ID) {
+        guard let next = nextStepID(after: id) else { return }
+        withAnimation(.easeInOut(duration: 0.35)) {
+            currentStepID = next
+        }
     }
 
     // MARK: Live coach — streaming transcript
@@ -387,20 +438,23 @@ final class WorkoutSession {
             guard case .set(let info) = steps[stepIdx].page else { continue }
             let prescribed = prescribedDisplay(atStepIndex: stepIdx)
             var line = "- set_index \(setIndex): prescribed \(prescribed)"
-            if info.skipped {
+            switch info.state {
+            case .skipped:
                 line += " — skipped"
-            } else if let idx = currentIndex, stepIdx < idx {
+            case .done:
                 line += " — done: \(info.exercise.target.displayString)"
                 if let r = rpe[steps[stepIdx].id] {
                     line += ", RPE \(String(format: "%.1f", r))"
                 }
-            } else if stepIdx == currentIndex {
-                line += " — current set"
-                if let r = rpe[steps[stepIdx].id] {
-                    line += ", RPE \(String(format: "%.1f", r))"
+            case .pending:
+                if stepIdx == currentIndex {
+                    line += " — current set"
+                    if let r = rpe[steps[stepIdx].id] {
+                        line += ", RPE \(String(format: "%.1f", r))"
+                    }
+                } else {
+                    line += " — upcoming"
                 }
-            } else {
-                line += " — upcoming"
             }
             lines.append(line)
         }
@@ -548,7 +602,7 @@ final class WorkoutSession {
             append(CoachMessage(kind: .diff, text: message), to: transcriptExercise)
             return message
         }
-        info.skipped = true
+        info.state = .skipped
         steps[stepIdx].page = .set(info)
 
         let confirmation = "\(exercise) set \(setIndex + 1): skipped."
@@ -624,8 +678,10 @@ final class WorkoutSession {
             if case .set = $0.page { return true }
             return false
         }
+        // `state == .done` (set by sliding a set's thumb right) is the authoritative "actually
+        // logged" signal, independent of where the pager happens to be sitting.
         let logged = setSteps.filter {
-            if case .set(let info) = $0.page { return !info.skipped }
+            if case .set(let info) = $0.page { return info.state == .done }
             return false
         }.count
         let values = setSteps.compactMap { rpe[$0.id] }

@@ -137,12 +137,15 @@ enum PlanEditInterpreter {
     }
 
     private static func adjustVolumeInSession(_ lower: String, direction: VolumeDirection, session: WorkoutSession) {
-        guard let currentIndex = session.currentIndex else { return }
-        // Only touch not-yet-reached sets, walking backwards so repeated removals/insertions don't
-        // shift not-yet-visited indices out from under the loop.
+        // Only touch sets that haven't been committed yet (`.pending`) — done/skipped sets are left
+        // alone regardless of where the pager happens to be sitting, since there's no single "active"
+        // position anymore. Walk backwards so repeated removals/insertions don't shift not-yet-visited
+        // indices out from under the loop.
         var i = session.steps.count - 1
-        while i > currentIndex {
-            guard case .set(let info) = session.steps[i].page, matches(lower, name: info.exercise.name) else {
+        while i >= 0 {
+            guard case .set(let info) = session.steps[i].page,
+                  matches(lower, name: info.exercise.name),
+                  info.state == .pending else {
                 i -= 1
                 continue
             }
