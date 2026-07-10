@@ -76,10 +76,6 @@ struct RunnerView: View {
                     .padding(.top, TopStripMetrics.topOffset)
                 }
             }
-            .overlay(alignment: .leading) {
-                CoachEdgeHint()
-                    .padding(.leading, 4)
-            }
             .overlay(alignment: .bottom) {
                 if currentStep != nil {
                     ControlsView(
@@ -160,23 +156,5 @@ private struct TopContextStrip: View {
         .contentShape(Rectangle())
         .accessibilityLabel("\(step.blockName), step \(stepIndex + 1) of \(totalSteps)")
         .accessibilityHint("Opens the full workout list")
-    }
-}
-
-/// A faint leading-edge hint that swiping right reveals the Coach screen. Purely decorative — the
-/// actual gesture is handled by the horizontal pager in `SessionView`.
-private struct CoachEdgeHint: View {
-    var body: some View {
-        VStack(spacing: 4) {
-            Image(systemName: "chevron.left")
-                .font(.caption.weight(.bold))
-            Text("Coach")
-                .font(.caption2.weight(.semibold))
-                .rotationEffect(.degrees(-90))
-                .fixedSize()
-                .frame(height: 44)
-        }
-        .foregroundStyle(.white.opacity(0.35))
-        .accessibilityHidden(true)
     }
 }

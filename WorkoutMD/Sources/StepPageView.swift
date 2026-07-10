@@ -199,17 +199,22 @@ private struct SetGestureLayer: View {
     }
 }
 
-/// The one interactive control in the runner: a round glass thumb, with NO track, NO labels, NO
-/// container behind it — just the circle. It is a PERSISTENT 3-state control, live on every page,
-/// always — but unlike earlier revisions, it never rests off-center: whatever `state` is, the thumb
-/// always shows at dead-center bottom, and that state is conveyed purely by its icon + tint
-/// (`.pending` neutral arrows, `.done` green checkmark, `.skipped` amber ✕). Sliding it past
-/// `armThreshold` either side commits a new state and springs the thumb straight back to center to
-/// show it; a plain tap (negligible movement) instead opens the effort prompt via `onTapEffort`.
+/// The one interactive control in the runner: a round glass thumb riding over a subtle glass
+/// track/capsule — the track has NO text labels and NO direction glyph on it, it's purely a visible
+/// container so the control doesn't read as a bare floating button. It is a PERSISTENT 3-state
+/// control, live on every page, always — but unlike earlier revisions, it never rests off-center:
+/// whatever `state` is, the thumb always shows at dead-center bottom, and that state is conveyed
+/// purely by the thumb's icon + tint (`.pending` a minimal neutral dot — deliberately NOT a
+/// left-right-arrows glyph, which read as an instructional label — `.done` green checkmark,
+/// `.skipped` amber ✕). Sliding it past `armThreshold` either side commits a new state and springs
+/// the thumb straight back to center to show it; a plain tap (negligible movement) instead opens the
+/// effort prompt via `onTapEffort`.
 ///
-/// The slide track spans roughly 80% of the page's width (read live via the enclosing
-/// `GeometryReader`, not a fixed constant) so left = skip / right = done have a long, comfortable
-/// throw — previously this travel was a fixed ~184pt, only about a third of most screens.
+/// The track (and the slide travel riding over it) spans roughly 80% of the page's width (read live
+/// via the enclosing `GeometryReader`, not a fixed constant) so left = skip / right = done have a
+/// long, comfortable throw — previously this travel was a fixed ~184pt, only about a third of most
+/// screens. The track is purely decorative (`allowsHitTesting(false)`): all gesture recognizers stay
+/// attached to the thumb circle only, so it doesn't change any touch handling.
 ///
 /// The `DragGesture` is attached with `.simultaneousGesture`, never `.gesture` — that's load-bearing.
 /// `.gesture` lets a child's recognizer win exclusively over an ancestor's (which is how buttons work
@@ -252,9 +257,14 @@ private struct DoneSkipThumb: View {
     @State private var trackWidth: CGFloat = 320
 
     private let axisLockDistance: CGFloat = 8
-    private let size: CGFloat = 60
+    /// Thumb diameter — 20% larger than the original 60pt design (72pt), while staying well above
+    /// the 44pt HIG minimum tap target.
+    private let size: CGFloat = 72
     /// The slide track spans ~80% of the page width.
     private let trackWidthFraction: CGFloat = 0.8
+    /// The visible glass track's height — shorter than the thumb so the thumb reads as riding "on
+    /// top of" it, matching a Liquid Glass slider silhouette.
+    private let trackHeight: CGFloat = 44
     /// Fraction of `maxTravel` a drag must cross to arm a commit — matches the old 64/92 ratio.
     private let armThresholdFraction: CGFloat = 0.68
 
@@ -265,18 +275,37 @@ private struct DoneSkipThumb: View {
 
     var body: some View {
         GeometryReader { geo in
-            Color.clear
-                .frame(width: geo.size.width, height: size)
-                .overlay {
+            // Per the Liquid Glass guidelines, sibling glass shapes belong inside a single
+            // `GlassEffectContainer` (rather than as standalone `.glassEffect()` views) — it lets
+            // the thumb visually blend into the track as it rides near it, and is the recommended
+            // way to render/perform multiple glass elements together.
+            GlassEffectContainer(spacing: 20) {
+                ZStack {
+                    // Visible glass track/container — no labels, no direction glyph, just a subtle
+                    // rounded capsule so the control reads as a slider rather than a bare floating
+                    // button. Purely decorative: it never participates in hit testing.
+                    Capsule()
+                        .fill(.clear)
+                        .frame(width: trackWidth * trackWidthFraction, height: trackHeight)
+                        .glassEffect(.regular, in: .capsule)
+                        .allowsHitTesting(false)
+
                     Circle()
                         .fill(.clear)
                         .frame(width: size, height: size)
                         .glassEffect(glassStyle, in: .circle)
                         .overlay {
-                            Image(systemName: icon)
-                                .font(.system(size: 20, weight: .bold))
-                                .foregroundStyle(.white)
-                                .contentTransition(.symbolEffect(.replace))
+                            if let icon {
+                                Image(systemName: icon)
+                                    .font(.system(size: 24, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .contentTransition(.symbolEffect(.replace))
+                            } else {
+                                // `.pending` shows a minimal, neutral dot — not a direction glyph.
+                                Circle()
+                                    .fill(Color.white.opacity(0.55))
+                                    .frame(width: 9, height: 9)
+                            }
                         }
                         .offset(x: dragTranslation)
                         .allowsHitTesting(!isSettling)
@@ -285,8 +314,10 @@ private struct DoneSkipThumb: View {
                         .accessibilityLabel("Set status: \(accessibilityStateName)")
                         .accessibilityHint("Tap to rate effort. Drag right to mark done, left to mark skipped.")
                 }
-                .onAppear { trackWidth = geo.size.width }
-                .onChange(of: geo.size.width) { _, newValue in trackWidth = newValue }
+                .frame(width: geo.size.width, height: size)
+            }
+            .onAppear { trackWidth = geo.size.width }
+            .onChange(of: geo.size.width) { _, newValue in trackWidth = newValue }
         }
         .frame(height: size)
     }
@@ -299,9 +330,11 @@ private struct DoneSkipThumb: View {
         }
     }
 
-    private var icon: String {
+    /// `nil` for `.pending` — rendered as a minimal dot instead of a glyph (see `body`), deliberately
+    /// NOT the old ↔ left-right-arrows icon, which read as an unwanted instructional label.
+    private var icon: String? {
         switch displayState {
-        case .pending: return "arrow.left.and.right"
+        case .pending: return nil
         case .done: return "checkmark"
         case .skipped: return "xmark"
         }
@@ -435,6 +468,12 @@ private struct FloatingTargetRows: View {
 
 /// One floating "− value unit +" line. Minimal, ungrouped glyph buttons (large ~46pt tap targets,
 /// light-weight glyph, subdued color) flank a big bold value — no glass, no pill background.
+///
+/// The value+unit block uses a fixed, CENTER-aligned frame (rather than a wider leading-aligned
+/// one) so it never grows lopsided room to one side as digit count changes — that asymmetry is
+/// what used to visually drag the whole "12 reps" cluster (and therefore the number itself) left
+/// of screen-center once the row was centered by its parent, since the minus/plus glyph buttons
+/// are equal-width and equally spaced either side of this block.
 private struct FloatingStepRow: View {
     let value: Int
     let unit: String
@@ -455,7 +494,7 @@ private struct FloatingStepRow: View {
                     .foregroundStyle(.white.opacity(0.6))
             }
             .foregroundStyle(.white)
-            .frame(minWidth: 132, alignment: .leading)
+            .frame(minWidth: 90, alignment: .center)
             .animation(.snappy, value: value)
 
             GlyphButton(symbol: "plus", label: "Increase \(unit)") { onAdjust(step) }
