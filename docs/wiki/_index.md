@@ -51,7 +51,7 @@ Last updated: 2026-07-10
 | [2026-07-10-42f3cd42f2de-75af564c-2-final-opus-readiness-gate-re-audit](research/2026-07-10-42f3cd42f2de-75af564c-2-final-opus-readiness-gate-re-audit.md) | 2026-07-10 | Final Opus readiness gate: re-audit with simulator build, live coach tool-loop test, and punch-list verification table; verdict PASS | subagent (Final Opus readiness gate) |
 | [AGENTS](research/AGENTS.md) |  |  |  |
 
-## Episode Cards (16 cards)
+## Episode Cards (20 cards)
 
 | Card | Date | Title | Salience | Status |
 |------|------|-------|----------|--------|
@@ -65,14 +65,18 @@ Last updated: 2026-07-10
 | [2026-07-10-42f3cd42f2de-75af564c-5-set-input-ui-redesign-tap-to](episodes/2026-07-10-42f3cd42f2de-75af564c-5-set-input-ui-redesign-tap-to.md) | 2026-07-10 | Set-input UI redesign: tap-to-reveal converges to floating-lines with reps and weight both editable, centered | product | active |
 | [2026-07-10-42f3cd42f2de-75af564c-6-nip-29-join-request-kind-9021](episodes/2026-07-10-42f3cd42f2de-75af564c-6-nip-29-join-request-kind-9021.md) | 2026-07-10 | NIP-29 join request (kind 9021) for requesting channel access when not a member | product | active |
 | [2026-07-10-42f3cd42f2de-75af564c-7-productization-finishing-pass-app-icon-onboarding](episodes/2026-07-10-42f3cd42f2de-75af564c-7-productization-finishing-pass-app-icon-onboarding.md) | 2026-07-10 | Productization finishing pass: app icon, onboarding, dev-scaffolding removal, default provider and no-key coach state | product | active |
-| [2026-07-10-43fd928f6da0-b40f7d8e-1-switch-ios-project-from-no-signing](episodes/2026-07-10-43fd928f6da0-b40f7d8e-1-switch-ios-project-from-no-signing.md) | 2026-07-10 | Switch iOS project from no-signing/simulator to paid-team code signing | architecture | active |
-| [2026-07-10-576bd63b163a-031f8906-1-overlay-after-ignoressafearea-double-counts-safe](episodes/2026-07-10-576bd63b163a-031f8906-1-overlay-after-ignoressafearea-double-counts-safe.md) | 2026-07-10 | Overlay-after-ignoresSafeArea double-counts safe-area insets | root-cause | active |
+| [2026-07-10-43fd928f6da0-b40f7d8e-1-code-signing-team-switched-from-personal](episodes/2026-07-10-43fd928f6da0-b40f7d8e-1-code-signing-team-switched-from-personal.md) | 2026-07-10 | Code signing team switched from personal free team to paid SANITY ISLAND LLC to preserve bundle ID | architecture | active |
+| [2026-07-10-43fd928f6da0-b40f7d8e-1-switch-ios-project-from-no-signing](episodes/2026-07-10-43fd928f6da0-b40f7d8e-1-switch-ios-project-from-no-signing.md) | 2026-07-10 | Switch iOS project from no-signing/simulator to paid-team code signing | architecture | superseded |
+| [2026-07-10-576bd63b163a-031f8906-1-overlay-after-ignoressafearea-double-counts-safe](episodes/2026-07-10-576bd63b163a-031f8906-1-overlay-after-ignoressafearea-double-counts-safe.md) | 2026-07-10 | Overlay-after-ignoresSafeArea double-counts safe-area insets | root-cause | superseded |
+| [2026-07-10-576bd63b163a-031f8906-1-overlay-safe-area-double-count-root](episodes/2026-07-10-576bd63b163a-031f8906-1-overlay-safe-area-double-count-root.md) | 2026-07-10 | Overlay safe-area double-count root cause for top pill overlap | root-cause | active |
 | [2026-07-10-576bd63b163a-031f8906-1-swiftui-overlay-safe-area-double-counting](episodes/2026-07-10-576bd63b163a-031f8906-1-swiftui-overlay-safe-area-double-counting.md) | 2026-07-10 | SwiftUI overlay safe-area double-counting root cause | root-cause | superseded |
-| [2026-07-10-576bd63b163a-031f8906-2-effort-control-redesigned-from-oversized-bar](episodes/2026-07-10-576bd63b163a-031f8906-2-effort-control-redesigned-from-oversized-bar.md) | 2026-07-10 | Effort control redesigned from oversized bar to compact toolbar | product | active |
+| [2026-07-10-576bd63b163a-031f8906-2-compact-liquid-glass-toolbar-replaces-oversized](episodes/2026-07-10-576bd63b163a-031f8906-2-compact-liquid-glass-toolbar-replaces-oversized.md) | 2026-07-10 | Compact Liquid Glass toolbar replaces oversized effort bar | product | active |
+| [2026-07-10-576bd63b163a-031f8906-2-effort-control-redesigned-from-oversized-bar](episodes/2026-07-10-576bd63b163a-031f8906-2-effort-control-redesigned-from-oversized-bar.md) | 2026-07-10 | Effort control redesigned from oversized bar to compact toolbar | product | superseded |
 | [2026-07-10-576bd63b163a-031f8906-3-countdown-generalized-to-all-timed-pages](episodes/2026-07-10-576bd63b163a-031f8906-3-countdown-generalized-to-all-timed-pages.md) | 2026-07-10 | Countdown generalized to all timed pages | product | superseded |
-| [2026-07-10-576bd63b163a-031f8906-3-rest-page-timer-generalized-from-static](episodes/2026-07-10-576bd63b163a-031f8906-3-rest-page-timer-generalized-from-static.md) | 2026-07-10 | Rest page timer generalized from static number to live countdown ring | product | active |
+| [2026-07-10-576bd63b163a-031f8906-3-rest-countdown-generalized-to-all-timed](episodes/2026-07-10-576bd63b163a-031f8906-3-rest-countdown-generalized-to-all-timed.md) | 2026-07-10 | Rest countdown generalized to all timed pages | product | active |
+| [2026-07-10-576bd63b163a-031f8906-3-rest-page-timer-generalized-from-static](episodes/2026-07-10-576bd63b163a-031f8906-3-rest-page-timer-generalized-from-static.md) | 2026-07-10 | Rest page timer generalized from static number to live countdown ring | product | superseded |
 
-## Nouns (33 entities)
+## Nouns (34 entities)
 
 | Noun | Name | Origin | Definition |
 |------|------|--------|------------|
@@ -106,6 +110,7 @@ Last updated: 2026-07-10
 | [what-should-i-do-next-affordance](nouns/what-should-i-do-next-affordance.md) | What should I do next? affordance | extracted | One button/utterance that regenerates the next session from current reality — the plan-repair engine surfaced as a single action. |
 | [whatsnextview](nouns/whatsnextview.md) | WhatsNextView | extracted | The 'what should I do next?' surface: a prominent Today entry (outside a running session) that asks the coach to propose or REPAIR the next session from recent history/goals. Forward-only — no guilt, no catch-up, no streaks — so a gap in training is surfaced as 'here's the next useful session,' never as a red missed-days count. Falls back to a deterministic coach-independent repair when no coach provider is reachable. |
 | [workout-md](nouns/workout-md.md) | Workout.md | extracted | A minimal-friction workout tracker where the wedge is fast tracking and AI is a planning layer behind the product, not a chatbot. |
+| [workout-md-ios-prototype](nouns/workout-md-ios-prototype.md) | workout-md-ios-prototype | extracted | A native SwiftUI iOS 26 Liquid Glass prototype for Workout.md using mock data with no backend |
 | [workoutblock-blockkind](nouns/workoutblock-blockkind.md) | WorkoutBlock / BlockKind | extracted | A model for straight-sets vs. superset/circuit groups, with rounds and an inline movement mini-map (A1 ▶ A2 …). |
 | [workoutlistview](nouns/workoutlistview.md) | WorkoutListView | extracted | The full workout overview presented as a sheet from the top context strip. Because a sheet is a native surface, a grouped List with rows is the correct idiom here — this is NOT the full-bleed, no-cards runner. Rows are grouped by block, the current step is highlighted, and tapping any row jumps the pager to that step. |
 | [workoutsession](nouns/workoutsession.md) | WorkoutSession | extracted | A shared @Observable (Observation framework) single source of truth owning mutable steps, currentStepID, per-set RPE, per-exercise transcripts, offerDeload, and deloaded state; all edit logic (adjustReps, skip, setEffort, sendCoachMessage, applyDeload, buildSummary) lives on it. |
