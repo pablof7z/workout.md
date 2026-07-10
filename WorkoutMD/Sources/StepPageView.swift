@@ -5,19 +5,16 @@ import UIKit
 /// The single most important screen in the app: one page = one set. Full-bleed background,
 /// big calm typography, a quiet coach cue, and — inside a group — a round counter and mini-map.
 ///
-/// Also hosts the done/skip gesture: `ActiveGestureLayer` anchors a round thumb near the bottom of
-/// THIS page (so it scrolls with the paging content — see `RunnerView`'s guardrail against a fixed
-/// overlay pager) when `step` is the session's ACTIVE set, or a quiet "Previewing" chip in the same
-/// spot for every other page.
+/// Also hosts the done/skip/pending gesture: `DoneSkipThumb` anchors a round thumb near the bottom
+/// of THIS page (so it scrolls with the paging content — see `RunnerView`'s guardrail against a
+/// fixed overlay pager), rendering and mutating THIS set's own `SetPageInfo.state` — every page's
+/// thumb is interactive, always, regardless of whether the pager happens to be sitting on it.
 struct StepPageView: View {
     let step: WorkoutStep
     /// Safe-area insets passed down from the runner (the paging ScrollView ignores the safe area,
     /// so pages must reserve this space themselves).
     var topInset: CGFloat = 0
     var bottomInset: CGFloat = 0
-    /// Called by the thumb when a done/skip commit on the last step leaves no next step to advance
-    /// to — mirrors `ControlsView`'s Finish button, just reachable from the gesture too.
-    var onFinish: () -> Void = {}
 
     /// The floating `TopContextStrip` pill's rendered geometry (see `RunnerView.TopStripMetrics`):
     /// its 6pt offset from the safe area + its ~34pt capsule height + 16pt of clearance, so page
@@ -43,8 +40,8 @@ struct StepPageView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipped()
         .overlay(alignment: .bottom) {
-            if case .set = step.page {
-                ActiveGestureLayer(step: step, onFinish: onFinish)
+            if case .set(let info) = step.page {
+                SetGestureLayer(step: step, state: info.state)
                     .padding(.bottom, bottomInset + 14)
             }
         }
@@ -64,27 +61,12 @@ struct StepPageView: View {
             Spacer(minLength: 24)
 
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
-                    Text(info.exercise.name)
-                        .font(.largeTitle.weight(.bold))
-                        .foregroundStyle(.white)
-                        .strikethrough(info.skipped, color: .white.opacity(0.6))
-                    if info.skipped {
-                        Text("SKIPPED")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .glassEffect(.regular.tint(.orange), in: .capsule)
-                    } else if info.completed {
-                        Text("DONE")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .glassEffect(.regular.tint(.green), in: .capsule)
-                    }
-                }
+                // No DONE/SKIPPED badge here — the set's status is rendered ONLY by its slider
+                // (`DoneSkipThumb`, bottom of this page), which is always interactive and always
+                // showing that set's true state.
+                Text(info.exercise.name)
+                    .font(.largeTitle.weight(.bold))
+                    .foregroundStyle(.white)
 
                 Text("Set \(info.setNumber) of \(info.totalSets)")
                     .font(.title3.weight(.medium))
@@ -94,7 +76,9 @@ struct StepPageView: View {
                     TimedHeroView(totalSeconds: seconds)
                         .padding(.top, 6)
                 } else {
-                    FloatingTargetRows(stepID: step.id, locked: info.skipped || info.completed)
+                    // Always editable, even for a set already marked done or skipped — the athlete
+                    // can page back to any set and fix its reps/weight after the fact.
+                    FloatingTargetRows(stepID: step.id)
                         .padding(.top, 6)
                 }
             }
@@ -164,66 +148,33 @@ struct StepPageView: View {
 
 // MARK: - Done / Skip gesture (rides the paging content, one instance per page)
 
-/// Decides what sits in the bottom gesture slot for THIS page: the live thumb when `step` is the
-/// session's ACTIVE set, or a quiet "previewing" chip for every other page (before or after it) —
-/// so scrolling to look ahead/back can never silently read as having logged anything.
-private struct ActiveGestureLayer: View {
+/// Hosts THIS page's thumb, wiring its commits back to the shared session by `step.id`. Every page
+/// gets one of these — there's no "active vs. previewing" branch anymore: whichever set you're
+/// looking at, its thumb is live and reflects that set's own `state`.
+private struct SetGestureLayer: View {
     @Environment(WorkoutSession.self) private var session
     let step: WorkoutStep
-    var onFinish: () -> Void
+    let state: SetState
 
     var body: some View {
-        Group {
-            if step.id == session.activeStepID {
-                DoneSkipThumb(
-                    onDone: { commit(done: true) },
-                    onSkip: { commit(done: false) }
-                )
-            } else {
-                PreviewChip()
+        DoneSkipThumb(state: state) { newState in
+            session.setState(newState, for: step.id)
+            switch newState {
+            case .done: Haptics.success()
+            case .skipped: Haptics.impact(.light)
+            case .pending: Haptics.selection()
             }
         }
-    }
-
-    /// Logs the ACTIVE set (done or skip), then either advances the active pointer and animates the
-    /// native pager to it (`session.viewStepID` is just a `.scrollPosition` id — SwiftUI drives the
-    /// actual transition, nothing here touches scroll offsets by hand), or — with no next step —
-    /// finishes the workout.
-    private func commit(done: Bool) {
-        if done {
-            session.complete(active: step.id)
-            Haptics.success()
-        } else {
-            session.skip(active: step.id)
-            Haptics.impact(.light)
-        }
-        if let nextID = session.advanceActive() {
-            withAnimation(.easeInOut(duration: 0.35)) {
-                session.viewStepID = nextID
-            }
-        } else {
-            onFinish()
-        }
-    }
-}
-
-/// Subtle "you're just looking" indicator shown in the thumb's spot on every non-active page.
-private struct PreviewChip: View {
-    var body: some View {
-        Text("Previewing — not logged")
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(.white.opacity(0.6))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .glassEffect(.regular, in: .capsule)
-            .accessibilityHidden(true)
     }
 }
 
 /// The one interactive control in the runner besides the effort dial: a round glass thumb, with NO
-/// track, NO labels, NO container behind it — just the circle. Slide it horizontally past the
-/// threshold to commit: right logs the active set DONE, left SKIPs it. Below threshold, or a
-/// vertical-dominant drag, springs back to rest with no effect.
+/// track, NO labels, NO container behind it — just the circle. It is a PERSISTENT 3-state control,
+/// live on every page, always: it renders `state` at rest (`.done` sits toward the right in green
+/// with a checkmark, `.skipped` toward the left in amber/orange with an ✕, `.pending` centered and
+/// neutral) and lets you slide it into any of the three states from wherever it currently rests —
+/// right toward done, left toward skipped, back toward the middle to clear it to pending — whether
+/// this page is "current" or one you've paged back to hours later to fix the weight.
 ///
 /// The `DragGesture` is attached with `.simultaneousGesture`, never `.gesture` — that's load-bearing.
 /// `.gesture` lets a child's recognizer win exclusively over an ancestor's (which is how buttons work
@@ -232,54 +183,88 @@ private struct PreviewChip: View {
 /// concurrently, and this view separately keys off `axis` (locked in once the drag's translation is
 /// unambiguously horizontal- vs. vertical-dominant, past `axisLockDistance`) to decide whether it has
 /// any opinion at all: a vertical-dominant drag — including one that starts right on top of the
-/// thumb — leaves `dragX` at 0 and fires no haptic, so the page behind it pages away exactly as if
-/// the thumb weren't there. Verified on-device: vertical swipes starting on the thumb still page.
+/// thumb — never moves it and fires no haptic, so the page behind it pages away exactly as if the
+/// thumb weren't there. Verified on-device: vertical swipes starting on the thumb still page.
 private struct DoneSkipThumb: View {
-    var onDone: () -> Void
-    var onSkip: () -> Void
+    /// The set's committed state — the source of truth this thumb rests at when not being dragged.
+    let state: SetState
+    /// Fired once a drag crosses a threshold into a DIFFERENT state than `state` and is released.
+    var onCommit: (SetState) -> Void
 
     private enum DragAxis { case horizontal, vertical }
-    private enum Morph { case none, done, skip }
 
-    @State private var dragX: CGFloat = 0
+    /// Additional horizontal offset from `state`'s resting position, live only while a horizontal
+    /// drag is in progress; snaps back to 0 once released (the new resting position then comes from
+    /// the updated `state` prop itself, not from this).
+    @State private var dragTranslation: CGFloat = 0
     @State private var axis: DragAxis?
-    @State private var morph: Morph = .none
+    /// The state the thumb is provisionally previewing mid-drag (nil = just showing `state`).
+    @State private var provisional: SetState?
     @State private var hapticTier = 0
     @State private var isSettling = false
 
     private let armThreshold: CGFloat = 64
     private let maxTravel: CGFloat = 92
+    /// How far off-center the thumb rests once committed to `.done`/`.skipped` — short of `maxTravel`
+    /// so there's still plenty of room to drag further, and short of `armThreshold` so resting there
+    /// doesn't read as "still mid-drag".
+    private let restOffset: CGFloat = 40
     private let axisLockDistance: CGFloat = 8
     private let size: CGFloat = 60
+
+    private var displayState: SetState { provisional ?? state }
+
+    private func restingOffset(for value: SetState) -> CGFloat {
+        switch value {
+        case .pending: return 0
+        case .done: return restOffset
+        case .skipped: return -restOffset
+        }
+    }
+
+    private var offset: CGFloat {
+        restingOffset(for: state) + dragTranslation
+    }
 
     var body: some View {
         Circle()
             .fill(.clear)
             .frame(width: size, height: size)
-            .glassEffect(
-                morph == .none
-                    ? .regular.interactive()
-                    : .regular.tint(morph == .done ? Color.green.opacity(0.85) : Color.orange.opacity(0.85)).interactive(),
-                in: .circle
-            )
+            .glassEffect(glassStyle, in: .circle)
             .overlay {
                 Image(systemName: icon)
                     .font(.system(size: 20, weight: .bold))
                     .foregroundStyle(.white)
                     .contentTransition(.symbolEffect(.replace))
             }
-            .offset(x: dragX)
+            .offset(x: offset)
             .allowsHitTesting(!isSettling)
             .simultaneousGesture(drag)
-            .accessibilityLabel("Log set")
-            .accessibilityHint("Drag right to mark done, left to skip")
+            .accessibilityLabel("Set status: \(accessibilityStateName)")
+            .accessibilityHint("Drag right to mark done, left to mark skipped, center for pending")
+    }
+
+    private var glassStyle: Glass {
+        switch displayState {
+        case .pending: return .regular.interactive()
+        case .done: return .regular.tint(Color.green.opacity(0.85)).interactive()
+        case .skipped: return .regular.tint(Color.orange.opacity(0.85)).interactive()
+        }
     }
 
     private var icon: String {
-        switch morph {
-        case .none: return "arrow.left.and.right"
+        switch displayState {
+        case .pending: return "arrow.left.and.right"
         case .done: return "checkmark"
-        case .skip: return "xmark"
+        case .skipped: return "xmark"
+        }
+    }
+
+    private var accessibilityStateName: String {
+        switch state {
+        case .pending: return "pending"
+        case .done: return "done"
+        case .skipped: return "skipped"
         }
     }
 
@@ -295,8 +280,10 @@ private struct DoneSkipThumb: View {
                 // Vertical-dominant (or not yet locked): don't move the thumb or fight the native
                 // scroll at all — the ScrollView's own simultaneous recognizer handles paging.
                 guard axis == .horizontal else { return }
-                dragX = max(-maxTravel, min(maxTravel, w))
-                updateRamp()
+                let raw = restingOffset(for: state) + w
+                let clamped = max(-maxTravel, min(maxTravel, raw))
+                dragTranslation = clamped - restingOffset(for: state)
+                updateRamp(position: clamped)
             }
             .onEnded { _ in
                 defer { axis = nil }
@@ -307,8 +294,8 @@ private struct DoneSkipThumb: View {
 
     /// Ramps a real `UIImpactFeedbackGenerator` as the thumb approaches `armThreshold` (one tap per
     /// fifth of the way there), then morphs the glyph the moment it arms.
-    private func updateRamp() {
-        let progress = min(1, abs(dragX) / armThreshold)
+    private func updateRamp(position: CGFloat) {
+        let progress = min(1, abs(position) / armThreshold)
         let tier = Int(progress * 5)
         if tier != hapticTier {
             hapticTier = tier
@@ -316,29 +303,24 @@ private struct DoneSkipThumb: View {
             generator.prepare()
             generator.impactOccurred(intensity: max(0.15, progress))
         }
-        let newMorph: Morph = dragX > armThreshold ? .done : (dragX < -armThreshold ? .skip : .none)
-        if newMorph != morph {
-            morph = newMorph
+        let newProvisional: SetState = position > armThreshold ? .done : (position < -armThreshold ? .skipped : .pending)
+        if newProvisional != displayState {
+            provisional = newProvisional
         }
     }
 
     private func resolve() {
-        guard abs(dragX) > armThreshold else {
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.68)) { dragX = 0 }
-            morph = .none
-            hapticTier = 0
-            return
-        }
-        let done = dragX > 0
+        let position = max(-maxTravel, min(maxTravel, restingOffset(for: state) + dragTranslation))
+        let newState: SetState = position > armThreshold ? .done : (position < -armThreshold ? .skipped : .pending)
+        let changed = newState != state
         isSettling = true
-        withAnimation(.easeOut(duration: 0.18)) {
-            dragX = done ? maxTravel + 30 : -(maxTravel + 30)
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.68)) {
+            dragTranslation = 0
+            provisional = nil
+            if changed { onCommit(newState) }
         }
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 220_000_000)
-            if done { onDone() } else { onSkip() }
-            dragX = 0
-            morph = .none
+            try? await Task.sleep(nanoseconds: 340_000_000)
             hapticTier = 0
             isSettling = false
         }
@@ -356,9 +338,6 @@ private struct DoneSkipThumb: View {
 private struct FloatingTargetRows: View {
     @Environment(WorkoutSession.self) private var session
     let stepID: WorkoutStep.ID
-    /// True once the set is skipped OR logged done — either way its target is frozen, matching the
-    /// old `skipped`-only gate plus the new `completed` state from the thumb's DONE slide.
-    let locked: Bool
 
     private var target: SetTarget {
         guard let idx = session.steps.firstIndex(where: { $0.id == stepID }),
@@ -389,8 +368,8 @@ private struct FloatingTargetRows: View {
                 }
             }
         }
-        .opacity(locked ? 0.45 : 1)
-        .disabled(locked)
+        // Always interactive — a set already marked done or skipped is still fully editable, so the
+        // athlete can page back and fix the weight/reps after the fact without unmarking anything.
         .accessibilityElement(children: .contain)
     }
 }

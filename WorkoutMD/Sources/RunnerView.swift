@@ -11,11 +11,11 @@ import SwiftUI
 /// - The floating glass controls float as `.overlay`s over the current page (never `.safeAreaInset`,
 ///   which would shrink the scroll container and break the stride).
 ///
-/// Vertical swipe (the native paging) is now a PEEK, not a commit: it moves `session.viewStepID`
-/// (what's on screen) without touching `session.activeStepID` (the set that still needs logging) —
-/// see `WorkoutSession` for the two pointers. Committing a set is the round thumb living inside each
-/// `StepPageView`, near the bottom: slide it right for done, left for skip. There is no Log & Next
-/// button and (after this pass) no Skip button either.
+/// Navigation is completely free: vertical swipe (the native paging) just moves `session.currentStepID`
+/// — there's no separate "active" pointer to advance, and no "previewing" state. Each `StepPageView`
+/// hosts its own persistent done/skip/pending slider (see `DoneSkipThumb`) that renders and mutates
+/// THAT set's own status, independent of the pager's position — so paging away and back always shows
+/// the set exactly how you left it, still slidable to any other state.
 struct RunnerView: View {
     /// Sizing for the floating `TopContextStrip` pill, shared with `StepPageView` so its `topReserve`
     /// can be derived from the pill's *actual* rendered geometry instead of a guessed constant.
@@ -62,8 +62,7 @@ struct RunnerView: View {
                         StepPageView(
                             step: step,
                             topInset: safeTop,
-                            bottomInset: safeBottom,
-                            onFinish: { onFinish(session.buildSummary()) }
+                            bottomInset: safeBottom
                         )
                         .containerRelativeFrame([.horizontal, .vertical])
                         .id(step.id)
@@ -72,11 +71,11 @@ struct RunnerView: View {
                 .scrollTargetLayout()
             }
             .scrollTargetBehavior(.paging)
-            .scrollPosition(id: $session.viewStepID)
+            .scrollPosition(id: $session.currentStepID)
             .ignoresSafeArea()
             .overlay(alignment: .top) {
-                if let viewed = viewStep {
-                    TopContextStrip(step: viewed, stepIndex: viewIndex, totalSteps: session.steps.count) {
+                if let current = currentStep {
+                    TopContextStrip(step: current, stepIndex: currentIndex, totalSteps: session.steps.count) {
                         showingList = true
                     }
                     .padding(.top, TopStripMetrics.topOffset)
@@ -91,9 +90,9 @@ struct RunnerView: View {
                 // `ControlsView`'s doc comment for why even an off-to-one-side placement in the
                 // thumb's row risks a momentary overlap during its commit fly-out, whereas a
                 // different corner entirely cannot, regardless of the thumb's travel distance.
-                if let viewed = viewStep, case .set = viewed.page {
-                    EffortControl(committed: session.rpe[viewed.id], expanded: $effortExpanded) { value in
-                        session.setEffort(value, for: viewed.id)
+                if let current = currentStep, case .set = current.page {
+                    EffortControl(committed: session.rpe[current.id], expanded: $effortExpanded) { value in
+                        session.setEffort(value, for: current.id)
                     }
                     // Symmetric horizontal padding (not just `.trailing`) so the expanded scale —
                     // which requests `maxWidth: .infinity` — insets evenly on both sides instead of
@@ -104,9 +103,9 @@ struct RunnerView: View {
                 }
             }
             .overlay(alignment: .bottom) {
-                if let viewed = viewStep {
+                if currentStep != nil {
                     ControlsView(
-                        isLast: isLastViewedStep,
+                        isLast: isLastStep,
                         onFinish: { onFinish(session.buildSummary()) }
                     )
                     // Same overlay-alignment quirk as the top pill (see `TopStripMetrics`): the
@@ -118,37 +117,34 @@ struct RunnerView: View {
         }
         .background(Color.black.ignoresSafeArea())
         .onAppear {
-            if session.activeStepID == nil {
-                session.activeStepID = session.steps.first?.id
-            }
-            if session.viewStepID == nil {
-                session.viewStepID = session.steps.first?.id
+            if session.currentStepID == nil {
+                session.currentStepID = session.steps.first?.id
             }
         }
         .sheet(isPresented: $showingList) {
             WorkoutListView(
                 workoutName: session.activePlan?.name ?? "Workout",
                 steps: session.steps,
-                currentID: session.viewStepID
+                currentID: session.currentStepID
             ) { id in
                 showingList = false
                 withAnimation(.easeInOut(duration: 0.35)) {
-                    session.viewStepID = id
+                    session.currentStepID = id
                 }
             }
         }
     }
 
-    private var viewIndex: Int {
-        session.viewIndex ?? 0
+    private var currentIndex: Int {
+        session.currentIndex ?? 0
     }
 
-    private var viewStep: WorkoutStep? {
-        session.viewStep ?? session.steps.first
+    private var currentStep: WorkoutStep? {
+        session.currentStep ?? session.steps.first
     }
 
-    private var isLastViewedStep: Bool {
-        viewIndex == session.steps.count - 1
+    private var isLastStep: Bool {
+        currentIndex == session.steps.count - 1
     }
 }
 
