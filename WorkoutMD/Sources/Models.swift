@@ -268,7 +268,12 @@ final class WorkoutSession {
         rpe[id] = value
     }
 
-    // MARK: Reps stepper edit
+    // MARK: Reps/weight floating-row edits
+    //
+    // Mirrors of `applyAdjustSet` (the coach's `adjust_set` tool) for the runner's always-visible
+    // reps/weight rows on the set page — the same mutation path, driven by direct − / + taps instead
+    // of a coach tool call. Both mutate `steps` in place so the change is live in the runner AND
+    // becomes the "actual" logged value once the session finishes (see `prescribedSteps` above).
 
     func adjustReps(forStepID id: WorkoutStep.ID, delta: Int) {
         guard let idx = steps.firstIndex(where: { $0.id == id }),
@@ -276,6 +281,18 @@ final class WorkoutSession {
               case .reps(let count, let weight) = info.exercise.target else { return }
         let newCount = max(0, count + delta)
         info.exercise.target = .reps(count: newCount, weight: weight)
+        steps[idx].page = .set(info)
+    }
+
+    /// Adjusts the current step's weight by `delta` (e.g. ±5 lb), floored at 0. No-ops for steps
+    /// that don't carry a weight (bodyweight movements, timed holds).
+    func adjustWeight(forStepID id: WorkoutStep.ID, delta: Double) {
+        guard let idx = steps.firstIndex(where: { $0.id == id }),
+              case .set(var info) = steps[idx].page,
+              case .reps(let count, let weight) = info.exercise.target,
+              let weight else { return }
+        let newWeight = max(0, weight + delta)
+        info.exercise.target = .reps(count: count, weight: newWeight)
         steps[idx].page = .set(info)
     }
 

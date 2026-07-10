@@ -14,11 +14,10 @@ struct StepPageView: View {
     /// its 6pt offset from the safe area + its ~34pt capsule height + 16pt of clearance, so page
     /// content (the overline, the mini-map row) never collides with the pill sitting above it.
     private var topReserve: CGFloat { topInset + RunnerView.TopStripMetrics.totalReserve }
-    /// Worst case is a reps-based set: a 52pt reps row (from the 52pt `StepperCircle`s) above a
-    /// 44pt effort/skip toolbar row, 12pt of spacing between them, plus the 10pt gap `RunnerView`
-    /// adds above the safe area (52 + 12 + 44 + 10 = 118), plus 26pt of clearance so hero content
-    /// never touches the glass toolbar.
-    private var bottomReserve: CGFloat { bottomInset + 144 }
+    /// The bottom cluster is now just one row: the 56pt round effort icon button (or the 44pt Skip
+    /// pill, whichever is taller) plus the 10pt gap `RunnerView` adds above the safe area
+    /// (56 + 10 = 66), plus 26pt of clearance so hero content never touches the glass toolbar.
+    private var bottomReserve: CGFloat { bottomInset + 92 }
 
     var body: some View {
         ZStack {
@@ -72,8 +71,8 @@ struct StepPageView: View {
                     TimedHeroView(totalSeconds: seconds)
                         .padding(.top, 6)
                 } else {
-                    HeroNumberText(text: info.exercise.target.displayString)
-                        .opacity(info.skipped ? 0.45 : 1)
+                    FloatingTargetRows(stepID: step.id, skipped: info.skipped)
+                        .padding(.top, 6)
                 }
             }
             .accessibilityElement(children: .combine)
@@ -140,16 +139,103 @@ struct StepPageView: View {
     }
 }
 
-/// A big, calm number/label for the set's target. Uses `@ScaledMetric` so the hero size still
-/// respects the user's Dynamic Type setting instead of being a fixed magic number.
-private struct HeroNumberText: View {
-    let text: String
-    @ScaledMetric(relativeTo: .title) private var size: CGFloat = 30
+/// The set's target, as two always-visible floating lines — reps, then weight (when the exercise
+/// tracks one) — each flanked by minus/plus glyph buttons. No tap-to-reveal gate and no glass
+/// container: like the exercise name and set line above it, each row floats as plain text directly
+/// over the full-bleed background. Reads and mutates the shared `WorkoutSession` by `stepID` (rather
+/// than trusting the `SetPageInfo` snapshot passed down from `StepPageView`) so a − / + tap here is
+/// reflected immediately, matching the pattern the old bottom-toolbar reps stepper used. Edits land
+/// in the same live `steps` array the coach's `adjust_set` tool mutates, so they persist into the
+/// logged "actual" set once the session finishes.
+private struct FloatingTargetRows: View {
+    @Environment(WorkoutSession.self) private var session
+    let stepID: WorkoutStep.ID
+    let skipped: Bool
+
+    private var target: SetTarget {
+        guard let idx = session.steps.firstIndex(where: { $0.id == stepID }),
+              case .set(let info) = session.steps[idx].page else { return .reps(count: 0, weight: nil) }
+        return info.exercise.target
+    }
+
+    private var reps: Int {
+        if case .reps(let count, _) = target { return count }
+        return 0
+    }
+
+    private var weight: Double? {
+        target.weight
+    }
 
     var body: some View {
-        Text(text)
-            .font(.system(size: size, weight: .semibold, design: .rounded))
-            .foregroundStyle(.white.opacity(0.94))
+        VStack(alignment: .leading, spacing: 8) {
+            FloatingStepRow(value: reps, unit: "reps") { delta in
+                Haptics.selection()
+                session.adjustReps(forStepID: stepID, delta: delta)
+            }
+
+            if weight != nil {
+                FloatingStepRow(value: Int(weight ?? 0), unit: "lb", step: 5) { delta in
+                    Haptics.selection()
+                    session.adjustWeight(forStepID: stepID, delta: Double(delta))
+                }
+            }
+        }
+        .opacity(skipped ? 0.45 : 1)
+        .disabled(skipped)
+        .accessibilityElement(children: .contain)
+    }
+}
+
+/// One floating "− value unit +" line. Minimal, ungrouped glyph buttons (large ~46pt tap targets,
+/// light-weight glyph, subdued color) flank a big bold value — no glass, no pill background.
+private struct FloatingStepRow: View {
+    let value: Int
+    let unit: String
+    var step: Int = 1
+    var onAdjust: (Int) -> Void
+
+    var body: some View {
+        HStack(spacing: 22) {
+            GlyphButton(symbol: "minus", label: "Decrease \(unit)") { onAdjust(-step) }
+
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Text("\(value)")
+                    .font(.system(size: 34, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .contentTransition(.numericText(value: Double(value)))
+                Text(unit)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.6))
+            }
+            .foregroundStyle(.white)
+            .frame(minWidth: 132, alignment: .leading)
+            .animation(.snappy, value: value)
+
+            GlyphButton(symbol: "plus", label: "Increase \(unit)") { onAdjust(step) }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityValue("\(value) \(unit)")
+    }
+}
+
+/// A minimal, ungrouped glyph button — light-weight glyph at low-opacity white, no background.
+/// ~46pt tappable target even though the glyph itself reads much smaller, per HIG touch guidance.
+private struct GlyphButton: View {
+    let symbol: String
+    let label: String
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 22, weight: .light))
+                .foregroundStyle(.white.opacity(0.6))
+                .frame(width: 46, height: 46)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 }
 
