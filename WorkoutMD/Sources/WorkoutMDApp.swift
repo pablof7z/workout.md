@@ -11,7 +11,11 @@ struct WorkoutMDApp: App {
             WorkoutRecord.self,
             ExerciseRecord.self,
             SetRecord.self,
-            CoachNoteRecord.self
+            CoachNoteRecord.self,
+            PlanRecord.self,
+            PlanBlockRecord.self,
+            PlanExerciseRecord.self,
+            PlanSetRecord.self
         ])
         // Explicitly opt this local SwiftData store out of SwiftData's automatic CloudKit mirroring.
         // Without this, `ModelConfiguration`'s default `cloudKitDatabase: .automatic` detects the
@@ -28,6 +32,7 @@ struct WorkoutMDApp: App {
             fatalError("Failed to create the WorkoutMD model container: \(error)")
         }
         MockHistory.seedIfNeeded(context: container.mainContext)
+        PlanStore.seedDefaultIfNeeded(context: container.mainContext)
         return container
     }()
 
@@ -62,7 +67,8 @@ private enum AppScreen {
 
 private struct RootView: View {
     @State private var screen: AppScreen = .today
-    /// The shared source of truth for the live session, created fresh each time the user starts.
+    /// The shared source of truth for the live session, created fresh each time the user starts —
+    /// always built from the ACTIVE `PlanRecord`, never a hardcoded workout (see `startSession`).
     @State private var session = WorkoutSession()
     /// App-wide, once-per-launch: the coach's Settings-backed preferences and the live coach engine
     /// itself. Both are injected here (rather than per-screen) so Today's gear button, the Coach
@@ -73,6 +79,9 @@ private struct RootView: View {
     /// so both share the one live `NostrCoach` instance/subscription.
     @State private var fabricController = FabricController.shared
     @Environment(\.modelContext) private var modelContext
+
+    @Query(filter: #Predicate<PlanRecord> { $0.isActive == true }) private var activePlans: [PlanRecord]
+    private var activePlan: PlanRecord? { activePlans.first }
 
     var body: some View {
         content
@@ -85,10 +94,14 @@ private struct RootView: View {
     private var content: some View {
         switch screen {
         case .today:
-            TodayView {
-                session = WorkoutSession()
-                withAnimation(.easeInOut) { screen = .runner }
-            }
+            TodayView(
+                activePlan: activePlan,
+                onStart: { startSession(with: activePlan) },
+                onSelectPlan: { plan in
+                    PlanStore.setActive(plan, context: modelContext)
+                    startSession(with: plan)
+                }
+            )
         case .runner:
             SessionView { summary in
                 saveToHistory()
@@ -102,13 +115,21 @@ private struct RootView: View {
         }
     }
 
+    /// Builds a fresh `WorkoutSession` from `plan`'s prescribed steps and switches to the runner.
+    /// No-op if there's no plan yet (Today already disables Start in that state).
+    private func startSession(with plan: PlanRecord?) {
+        guard let plan else { return }
+        session = WorkoutSession(steps: plan.toWorkoutSteps(), activePlan: plan, modelContext: modelContext)
+        withAnimation(.easeInOut) { screen = .runner }
+    }
+
     /// Bridges the finished `WorkoutSession` into durable SwiftData history. The live session object
     /// itself is left untouched — this only reads it to build an independent snapshot. Also kicks
     /// off a GitHub commit of the session's Markdown (no-op if no token is stored yet) and, if the
     /// fabric is enabled, posts a terse kind:9 summary to the user's tenex-edge channel (no-op if the
     /// toggle is off).
     private func saveToHistory() {
-        let record = session.makeRecord(workoutName: MockWorkout.name, goal: MockWorkout.goal)
+        let record = session.makeRecord(workoutName: session.activePlan?.name ?? "Workout", goal: session.activePlan?.goal)
         modelContext.insert(record)
         try? modelContext.save()
         Task {

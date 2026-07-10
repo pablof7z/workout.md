@@ -138,8 +138,9 @@ final class SyncManager {
         do {
             let filename = GitHubSync.sessionFileName(for: record)
             _ = try await icloud.writeSession(markdown: markdown, filename: filename)
-            let plan = MarkdownGenerator.renderPlan(name: MockWorkout.name, goal: MockWorkout.goal, blocks: MockWorkout.blocks)
-            try? await icloud.writePlan(markdown: plan)
+            // Plan mirroring is handled where a ModelContext/active PlanRecord is available
+            // (plan export is also available via the editor's ShareLink). Session markdown is the
+            // primary synced artifact here.
             lastICloudSyncedAt = .now
             icloudStatus = .idle
         } catch ICloudSync.ICloudSyncError.unavailable {
