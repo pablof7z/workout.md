@@ -1,0 +1,34 @@
+[
+  [
+    "user",
+    "deploy to my iphone"
+  ],
+  [
+    "assistant",
+    "Asked the user to sign in to Xcode Accounts with the Apple ID tied to team C99QRJCR43 and let the agent know once done."
+  ],
+  [
+    "user",
+    "done"
+  ],
+  [
+    "assistant",
+    "Confirmed Workout.md is installed and running on the iPhone, noting the bundle identifier came out as md.workout instead of com.workoutmd.prototype due to automatic signing on a free/personal team."
+  ],
+  [
+    "user",
+    "no, use my team account -- and my bundle id"
+  ],
+  [
+    "assistant",
+    "Redeployed and launched, now signed under SANITY ISLAND LLC (456SHKPP26) with the correct bundle ID com.workoutmd.prototype, and updated project.yml to keep using this team."
+  ],
+  [
+    "user",
+    "did you commit your work?"
+  ],
+  [
+    "assistant",
+    "Committed the pending docs/wiki capture files as d4e260b, noting the earlier project.yml team/bundle-ID fix was already committed by another agent and that .claude/worktrees/ and WorkoutMD/build-device/ were left out as local tooling state and build artifacts."
+  ]
+]

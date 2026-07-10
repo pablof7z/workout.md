@@ -1,0 +1,34 @@
+[
+  [
+    "user",
+    "deploy to my iphone"
+  ],
+  [
+    "assistant",
+    "Xcode's Settings should now be open. Please click the **Accounts** tab and sign in with the Apple ID tied to team `C99QRJCR43` (Pablo Fernandez) — 2FA may prompt on your phone/other device. Let me know once you're signed in and I'll continue the build and deploy to your iPhone."
+  ],
+  [
+    "user",
+    "done"
+  ],
+  [
+    "assistant",
+    "Workout.md is installed and running on your iPhone. It launched automatically — you should see it on screen now.\n\nOne thing worth noting: the bundle identifier came out as `md.workout` instead of the `com.workoutmd.prototype` set in `project.yml` — automatic signing on a free/personal team can rewrite the bundle ID to match what's registered for your account. Not a problem functionally, just flagging it in case it matters later (e.g., if you add entitlements tied to a specific bundle ID)."
+  ],
+  [
+    "user",
+    "no, use my team account -- and my bundle id"
+  ],
+  [
+    "assistant",
+    "Redeployed and launched — now signed under your **SANITY ISLAND LLC** team (`456SHKPP26`) with the correct bundle ID `com.workoutmd.prototype`. `project.yml` is updated to keep using this team going forward."
+  ],
+  [
+    "user",
+    "did you commit your work?"
+  ],
+  [
+    "assistant",
+    "Committed as `d4e260b`. To answer your original question: the `project.yml` team/bundle-ID fix from earlier was already committed (working tree was clean there) — likely by another agent in the fabric. Just now I committed the pending docs/wiki capture files. I left out `.claude/worktrees/` and `WorkoutMD/build-device/` since those are local tooling state and build artifacts, not source."
+  ]
+]
