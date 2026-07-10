@@ -182,7 +182,8 @@ private struct SetGestureLayer: View {
             },
             onTapEffort: {
                 showingEffortPrompt = true
-            }
+            },
+            rpe: session.rpe[step.id]
         )
         .frame(maxWidth: .infinity)
         .sheet(isPresented: $showingEffortPrompt) {
@@ -241,6 +242,8 @@ private struct DoneSkipThumb: View {
     var onCommit: (SetState) -> Void
     /// Fired on a plain tap (as opposed to a horizontal drag) — opens the effort prompt.
     var onTapEffort: () -> Void
+    /// The set's committed RPE (6–10) if it's been rated — shown as a small badge on the ✓ (done) knob.
+    var rpe: Double? = nil
 
     private enum DragAxis { case horizontal, vertical }
 
@@ -355,6 +358,25 @@ private struct DoneSkipThumb: View {
                     pendingGrip
                 }
             }
+            .overlay(alignment: .topTrailing) {
+                if displayState == .done, let rpe {
+                    effortBadge(rpe)
+                }
+            }
+    }
+
+    /// A small badge on the done (✓) knob showing the RPE the user rated this set (6–10), tinted by
+    /// the effort scale. Only appears once the set is `.done` AND has been rated via the effort prompt.
+    private func effortBadge(_ rpe: Double) -> some View {
+        Text("\(Int(rpe.rounded()))")
+            .font(.system(size: 13, weight: .heavy, design: .rounded))
+            .foregroundStyle(.white)
+            .frame(width: 24, height: 24)
+            .background(Circle().fill(EffortScale.color(for: rpe)))
+            .overlay(Circle().strokeBorder(.white, lineWidth: 1.5))
+            .shadow(color: .black.opacity(0.3), radius: 2, y: 1)
+            .offset(x: 5, y: -5)
+            .transition(.scale.combined(with: .opacity))
     }
 
     /// Two subtle vertical bars — a minimal "grip" affordance, like a drag handle, shown only while
