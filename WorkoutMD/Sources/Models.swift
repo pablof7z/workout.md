@@ -209,7 +209,7 @@ final class WorkoutSession {
     /// Exercises marked to deload / skip upcoming sessions.
     var deloaded: Set<String> = []
     /// The in-flight streaming coach-reply message id per exercise, while a `send_message` turn is
-    /// being streamed — see `beginStreamingReply`/`appendStreamingDelta`/`finalizeStreamingReply`.
+    /// being streamed — see `beginStreamingReply`/`replaceStreamingText`/`finalizeStreamingReply`.
     private var streamingMessageID: [String: UUID] = [:]
 
     /// A snapshot of `steps` as they stood at session start, before any coach edit or reps-stepper
@@ -297,7 +297,7 @@ final class WorkoutSession {
         append(CoachMessage(kind: .user, text: text), to: exercise)
     }
 
-    /// Opens an empty coach-reply placeholder that `appendStreamingDelta`/`finalizeStreamingReply`
+    /// Opens an empty coach-reply placeholder that `replaceStreamingText`/`finalizeStreamingReply`
     /// fill in as the turn streams — the visible "live typing" effect in `CoachView`.
     func beginStreamingReply(for exercise: String) {
         let placeholder = CoachMessage(kind: .coach, text: "")
@@ -305,12 +305,17 @@ final class WorkoutSession {
         streamingMessageID[exercise] = placeholder.id
     }
 
-    /// Appends one `on_text_delta` chunk to the in-flight placeholder for `exercise`, if any.
-    func appendStreamingDelta(_ delta: String, exercise: String) {
+    /// Overwrites the in-flight placeholder for `exercise` with `text` wholesale, called after every
+    /// `on_text_delta` chunk. Whole-value replacement rather than append: `CoachStreamSink` (see
+    /// `CoachController.swift`) runs each raw delta through `ThinkStripper`, whose think-stripped
+    /// "visible" projection of a growing raw buffer can *shrink* — not just grow — mid-stream (a
+    /// model that omits the opening `<think>` tag makes everything before the eventual `</think>`
+    /// retroactively hidden once that close tag arrives), which a plain `+=` can't express.
+    func replaceStreamingText(_ text: String, for exercise: String) {
         guard let id = streamingMessageID[exercise],
               var list = transcripts[exercise],
               let idx = list.firstIndex(where: { $0.id == id }) else { return }
-        list[idx].text += delta
+        list[idx].text = text
         transcripts[exercise] = list
     }
 
