@@ -159,6 +159,14 @@ final class AppSettings {
         }
     }
 
+    // MARK: Onboarding
+
+    /// Whether the first-run `OnboardingView` sequence has been shown and dismissed. Set once, on
+    /// "Get started" — never reset by the app itself.
+    var hasOnboarded: Bool {
+        didSet { defaults.set(hasOnboarded, forKey: Keys.hasOnboarded) }
+    }
+
     private enum Keys {
         static let providerKind = "coach.providerKind"
         static let ollamaBaseURL = "coach.ollamaBaseURL"
@@ -176,12 +184,18 @@ final class AppSettings {
         static let primaryGoal = "prefs.primaryGoal"
         static let sessionLengthMinutes = "prefs.sessionLengthMinutes"
         static let dislikedExercises = "prefs.dislikedExercises"
+        static let hasOnboarded = "onboarding.hasOnboarded"
     }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
 
-        providerKind = CoachProviderKind(rawValue: defaults.string(forKey: Keys.providerKind) ?? "") ?? .ollama
+        // OpenRouter is the default rather than Ollama: a local Ollama server at `localhost` can
+        // never be reachable from a real iPhone (only the Simulator, which shares the Mac's
+        // network namespace), so defaulting to it made every first-run coach turn dump a raw
+        // connection error. OpenRouter at least fails calmly into `CoachView`'s "no key yet" state
+        // (see `isCoachConfigured`) until the athlete adds a key in Settings.
+        providerKind = CoachProviderKind(rawValue: defaults.string(forKey: Keys.providerKind) ?? "") ?? .openRouter
         ollamaBaseURL = {
             let stored = defaults.string(forKey: Keys.ollamaBaseURL) ?? ""
             return stored.isEmpty ? "http://localhost:11434" : stored
@@ -220,6 +234,8 @@ final class AppSettings {
         } else {
             dislikedExercises = []
         }
+
+        hasOnboarded = defaults.bool(forKey: Keys.hasOnboarded)
     }
 
     /// The system prompt actually sent to the coach engine on every turn: the user's override if

@@ -3,9 +3,9 @@ import SwiftData
 
 @main
 struct WorkoutMDApp: App {
-    /// Built explicitly (rather than via the `.modelContainer(for:)` scene modifier) so mock history
-    /// can be seeded synchronously before the first frame, using the same container the rest of the
-    /// app shares.
+    /// Built explicitly (rather than via the `.modelContainer(for:)` scene modifier) so the default
+    /// plan seed can run synchronously before the first frame, using the same container the rest of
+    /// the app shares.
     private let container: ModelContainer = {
         let schema = Schema([
             WorkoutRecord.self,
@@ -31,7 +31,6 @@ struct WorkoutMDApp: App {
         } catch {
             fatalError("Failed to create the WorkoutMD model container: \(error)")
         }
-        MockHistory.seedIfNeeded(context: container.mainContext)
         PlanStore.seedDefaultIfNeeded(context: container.mainContext)
         return container
     }()
@@ -84,10 +83,18 @@ private struct RootView: View {
     private var activePlan: PlanRecord? { activePlans.first }
 
     var body: some View {
-        content
-            .environment(appSettings)
-            .environment(coachController)
-            .environment(fabricController)
+        Group {
+            if appSettings.hasOnboarded {
+                content
+            } else {
+                OnboardingView {
+                    appSettings.hasOnboarded = true
+                }
+            }
+        }
+        .environment(appSettings)
+        .environment(coachController)
+        .environment(fabricController)
     }
 
     @ViewBuilder

@@ -10,6 +10,7 @@ import SwiftData
 struct CoachView: View {
     @Environment(WorkoutSession.self) private var session
     @Environment(CoachController.self) private var coach
+    @Environment(AppSettings.self) private var settings
     @Environment(\.modelContext) private var modelContext
     var onBackToRunner: () -> Void
 
@@ -21,6 +22,21 @@ struct CoachView: View {
     private var moodKey: MoodKey { session.currentStep?.moodKey ?? .rest }
     private var messages: [CoachMessage] { session.transcript(for: exerciseName) }
 
+    /// True once the currently-selected provider has a credential to actually talk to — `openRouter`
+    /// needs a stored API key; `ollama` is a deliberate user choice (its base URL may be a reachable
+    /// remote host), so it's never treated as "unconfigured" here. Keeps first-run calm: rather than
+    /// sending a turn that's certain to fail and showing a raw connection error, `CoachView` shows a
+    /// quiet inline nudge toward Settings instead (see `unconfiguredState`).
+    private var isCoachConfigured: Bool {
+        switch settings.providerKind {
+        case .openRouter:
+            let key = (try? CoachSecrets.openRouterAPIKey()) ?? nil
+            return !(key ?? "").isEmpty
+        case .ollama:
+            return true
+        }
+    }
+
     var body: some View {
         ZStack {
             BackgroundView(moodKey: moodKey)
@@ -28,9 +44,15 @@ struct CoachView: View {
 
             VStack(spacing: 0) {
                 header
-                transcript
-                deloadChip
-                inputBar
+                if isCoachConfigured {
+                    transcript
+                    deloadChip
+                    inputBar
+                } else {
+                    Spacer()
+                    unconfiguredState
+                    Spacer()
+                }
             }
         }
         .onAppear { session.seedTranscriptIfNeeded(for: exerciseName) }
@@ -58,34 +80,73 @@ struct CoachView: View {
 
             Spacer()
 
-            Button { showingSettings = true } label: {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.9))
-                    .frame(width: 40, height: 40)
-            }
-            .buttonStyle(.plain)
-            .glassEffect(.regular.interactive(), in: .circle)
-            .accessibilityLabel("Coach settings")
-            .padding(.trailing, 8)
+            GlassEffectContainer(spacing: 8) {
+                HStack(spacing: 8) {
+                    Button { showingSettings = true } label: {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .frame(width: 40, height: 40)
+                    }
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.interactive(), in: .circle)
+                    .accessibilityLabel("Coach settings")
 
-            Button(action: onBackToRunner) {
-                HStack(spacing: 4) {
-                    Text("Set")
-                    Image(systemName: "chevron.right")
+                    Button(action: onBackToRunner) {
+                        HStack(spacing: 4) {
+                            Text("Set")
+                            Image(systemName: "chevron.right")
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .padding(.horizontal, 14)
+                        .frame(height: 40)
+                    }
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.interactive(), in: .capsule)
+                    .accessibilityLabel("Back to the set")
                 }
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.9))
-                .padding(.horizontal, 14)
-                .frame(height: 40)
             }
-            .buttonStyle(.plain)
-            .glassEffect(.regular.interactive(), in: .capsule)
-            .accessibilityLabel("Back to the set")
         }
         .padding(.horizontal, 24)
         .padding(.top, 60)
         .padding(.bottom, 12)
+    }
+
+    // MARK: Unconfigured (no provider key yet)
+
+    /// A calm, on-brand placeholder shown instead of the transcript/input when there's no coach
+    /// credential to actually send a turn with — replaces what used to be a raw connection-error
+    /// transcript on first run (the default provider, and its base URL, live in `AppSettings`).
+    private var unconfiguredState: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "quote.bubble")
+                .font(.system(size: 28, weight: .regular))
+                .foregroundStyle(.white.opacity(0.4))
+            Text("Your coach isn't set up yet")
+                .font(.headline)
+                .foregroundStyle(.white)
+            Text("Add a provider key to get live, personalized guidance during your sets.")
+                .font(.subheadline)
+                .foregroundStyle(.white.opacity(0.6))
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button {
+                Haptics.impact(.light)
+                showingSettings = true
+            } label: {
+                Text("Set up your coach in Settings")
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 20)
+                    .frame(height: 44)
+            }
+            .buttonStyle(.glassProminent)
+            .tint(.indigo)
+            .padding(.top, 4)
+        }
+        .padding(.horizontal, 40)
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: Transcript
