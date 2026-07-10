@@ -1,5 +1,6 @@
 # Xcode / Swift
 build/
+build-device/
 DerivedData/
 *.xcuserstate
 xcuserdata/
@@ -23,3 +24,6 @@ target/
 
 # Node (in case tooling needs it)
 node_modules/
+
+# Local agent tooling state
+.claude/
