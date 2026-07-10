@@ -107,6 +107,64 @@ final class CoachController {
         )
     }
 
+    // MARK: - Plan generation ("create_plan" / "propose_plan")
+
+    /// Generates a plan proposal from a free-text goal (e.g. "upper body, 45 min, hypertrophy") or,
+    /// for the Today "What should I do next?" repair flow, a richer prompt built from recent
+    /// session history. Implemented as one dedicated, non-conversational coach turn that asks for a
+    /// structured JSON reply and parses it (see `PlanGeneration.swift`) — the simpler, robust path
+    /// the product spec allows instead of a new Rust-core tool + bindings regen. `completion` is
+    /// always called on the main thread.
+    func generatePlan(goalPrompt: String, sessionLengthMinutes: Int, completion: @escaping (Result<PlanRecord, PlanGenerationError>) -> Void) {
+        applySettings()
+
+        let userMessage = """
+        Goal: \(goalPrompt)
+        Target session length: \(sessionLengthMinutes) minutes.
+
+        Reply with ONLY the JSON object described in your instructions — no prose, no markdown code fence, nothing before or after the braces.
+        """
+
+        isSending = true
+        let sink = PlanGenerationSink(
+            onCompleted: { [weak self] fullText in
+                self?.isSending = false
+                guard let proposal = ProposedPlan.parse(fullText) else {
+                    completion(.failure(.malformedResponse(fullText)))
+                    return
+                }
+                completion(.success(proposal.makePlanRecord()))
+            },
+            onError: { [weak self] message in
+                self?.isSending = false
+                completion(.failure(.engineError(message)))
+            }
+        )
+
+        engine.sendMessage(
+            systemPrompt: Self.planGenerationSystemPrompt,
+            userMessage: userMessage,
+            historyJson: "[]",
+            sink: sink,
+            host: NoopCoachHost()
+        )
+    }
+
+    private static let planGenerationSystemPrompt = """
+    You are a strength coach designing a workout plan. Given the athlete's goal and target session \
+    length, respond with ONLY a single JSON object — no markdown code fences, no prose before or \
+    after — of exactly this shape:
+    {"name": string, "goal": string, "blocks": [{"kind": "straight"|"superset"|"circuit", "label": \
+    string, "rounds": integer, "restSeconds": integer or null, "exercises": [{"name": string, \
+    "cue": string, "sets": [{"reps": integer or null, "weight": number or null, "seconds": integer \
+    or null}]}]}]}
+    Rules: a "straight" block has exactly one exercise; "superset"/"circuit" blocks have two or more \
+    exercises sharing "rounds", and each exercise's "sets" array should have exactly one entry per \
+    round. Use "seconds" (and leave "reps"/"weight" null) for a timed hold; otherwise use "reps" \
+    (and "weight" if it's a loaded movement, null for bodyweight). Keep the plan realistic for the \
+    stated session length and goal. Never include commentary outside the JSON object.
+    """
+
     // MARK: - Persisted memory
 
     /// Reads back up to `limit` persisted `CoachNoteRecord`s scoped to `exercise` (oldest first,

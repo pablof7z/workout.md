@@ -1,5 +1,6 @@
 import SwiftUI
 import Observation
+import SwiftData
 
 // MARK: - Domain Models
 
@@ -55,8 +56,17 @@ enum GroupKind {
 }
 
 /// Drives the per-page background color story so the pager feels alive as movements change.
-enum MoodKey {
+enum MoodKey: CaseIterable {
     case bench, inclinePress, row, facePull, cableFly, plank, rest
+
+    /// Non-`.rest` cases, in a fixed rotation order — used to assign a varied background story to
+    /// exercises that come from a user-authored `PlanRecord` (which has no hand-picked `MoodKey` of
+    /// its own), by cycling through this list positionally.
+    private static let rotation: [MoodKey] = [.bench, .inclinePress, .row, .facePull, .cableFly, .plank]
+
+    static func atIndex(_ index: Int) -> MoodKey {
+        rotation[((index % rotation.count) + rotation.count) % rotation.count]
+    }
 }
 
 /// A named unit of a workout: either straight sets of one exercise, or a superset/circuit group.
@@ -209,10 +219,21 @@ final class WorkoutSession {
     let startedAt: Date = .now
     let prescribedSteps: [WorkoutStep]
 
-    init(steps: [WorkoutStep] = MockWorkout.steps) {
+    /// The persisted plan this session was started from — the same `PlanRecord` the coach's
+    /// `edit_plan` tool mutates (see `applyEditPlan` below), so a structural change lands both in
+    /// the durable plan (future sessions) and, best-effort, in this session's own live `steps`.
+    /// `nil` only for a session built directly from raw `steps` (e.g. previews/tests).
+    var activePlan: PlanRecord?
+    /// Needed to persist `activePlan` mutations `edit_plan` makes. Not used for anything else —
+    /// completed-session history is still saved by the app root via `makeRecord`, not from here.
+    var modelContext: ModelContext?
+
+    init(steps: [WorkoutStep] = [], activePlan: PlanRecord? = nil, modelContext: ModelContext? = nil) {
         self.steps = steps
         self.prescribedSteps = steps
         self.currentStepID = steps.first?.id
+        self.activePlan = activePlan
+        self.modelContext = modelContext
     }
 
     // MARK: Lookups
@@ -529,14 +550,26 @@ final class WorkoutSession {
         return confirmation
     }
 
-    /// `edit_plan` — structural plan changes (swap an exercise, change the split, add/remove a day)
-    /// are out of scope for this prototype's static `MockWorkout` plan graph, so this records the
-    /// instruction as an applied plan-level note rather than silently no-op'ing. A generic plan
-    /// mutation engine is a follow-up.
+    /// `edit_plan` — structural plan changes (swap an exercise, add a drop set, trim/add volume for
+    /// a body-part group) are real now: `PlanEditInterpreter` pattern-matches `instruction` and, when
+    /// it recognizes one, mutates the ACTIVE `PlanRecord` (persisted — affects future sessions) and
+    /// best-effort mirrors the same change onto this session's live `steps` (if one is running
+    /// against that plan) without disturbing any set already completed. Falls back to recording the
+    /// instruction as a plain plan note — same as this tool's original prototype behavior — when
+    /// nothing matches, rather than silently no-op'ing.
     private func applyEditPlan(instruction: String, transcriptExercise: String) -> String {
-        let confirmation = "Plan note recorded: \(instruction)"
-        append(CoachMessage(kind: .diff, text: confirmation), to: transcriptExercise)
-        return confirmation
+        guard let activePlan else {
+            let confirmation = "Plan note recorded: \(instruction)"
+            append(CoachMessage(kind: .diff, text: confirmation), to: transcriptExercise)
+            return confirmation
+        }
+        let applied = PlanEditInterpreter.applyToPlan(instruction: instruction, plan: activePlan)
+        if applied.changed {
+            try? modelContext?.save()
+            PlanEditInterpreter.applyToSession(instruction: instruction, session: self)
+        }
+        append(CoachMessage(kind: .diff, text: applied.summary), to: transcriptExercise)
+        return applied.summary
     }
 
     // MARK: Manual deload shortcut (Coach screen's "Deload 2 weeks" chip)
@@ -579,128 +612,3 @@ final class WorkoutSession {
     }
 }
 
-// MARK: - Mock Workout Data
-
-enum MockWorkout {
-    static let name = "Upper Body A"
-    static let goal = "Hypertrophy"
-    static let summary = "3 blocks · ~45 min · Hypertrophy"
-
-    static let blocks: [WorkoutBlock] = {
-        let bench = Exercise(
-            name: "Bench Press",
-            cue: "Control the eccentric, 2s down. Leave 2 in the tank.",
-            target: .reps(count: 10, weight: 135),
-            moodKey: .bench
-        )
-
-        let inclineDB = Exercise(
-            name: "Incline DB Press",
-            cue: "Squeeze at the top. Stop 1–2 reps short.",
-            target: .reps(count: 12, weight: 50),
-            moodKey: .inclinePress
-        )
-        let row = Exercise(
-            name: "Barbell Row",
-            cue: "Flat back. Drive elbows to hips.",
-            target: .reps(count: 10, weight: 135),
-            moodKey: .row
-        )
-
-        let facePull = Exercise(
-            name: "Face Pull",
-            cue: "High elbows, pull to the eyes.",
-            target: .reps(count: 15, weight: nil),
-            moodKey: .facePull
-        )
-        let cableFly = Exercise(
-            name: "Cable Fly",
-            cue: "Long arc, feel the stretch.",
-            target: .reps(count: 12, weight: nil),
-            moodKey: .cableFly
-        )
-        let plank = Exercise(
-            name: "Plank",
-            cue: "Ribs down, glutes tight.",
-            target: .timed(seconds: 45),
-            moodKey: .plank
-        )
-
-        return [
-            WorkoutBlock(name: "Bench Press", kind: .straightSets(exercise: bench, sets: 3)),
-            WorkoutBlock(
-                name: "Superset A",
-                kind: .group(kind: .superset, label: "Superset A", letterPrefix: "A", exercises: [inclineDB, row], rounds: 3, restSeconds: 60)
-            ),
-            WorkoutBlock(
-                name: "Circuit",
-                kind: .group(kind: .circuit, label: "Circuit", letterPrefix: nil, exercises: [facePull, cableFly, plank], rounds: 3, restSeconds: 45)
-            )
-        ]
-    }()
-
-    static var steps: [WorkoutStep] { flatten(blocks: blocks) }
-
-    /// Turns the block list into the flat sequence of pager pages, inserting rest pages between
-    /// rounds of a group (but never after the final round).
-    private static func flatten(blocks: [WorkoutBlock]) -> [WorkoutStep] {
-        var result: [WorkoutStep] = []
-
-        for (blockIndex, block) in blocks.enumerated() {
-            switch block.kind {
-            case .straightSets(let exercise, let sets):
-                for setNumber in 1...sets {
-                    let info = SetPageInfo(
-                        exercise: exercise,
-                        setNumber: setNumber,
-                        totalSets: sets,
-                        groupLabel: nil,
-                        groupKind: nil,
-                        round: nil,
-                        totalRounds: nil,
-                        miniMap: nil
-                    )
-                    result.append(WorkoutStep(blockIndex: blockIndex, blockName: block.name, moodKey: exercise.moodKey, page: .set(info), exerciseName: exercise.name))
-                }
-
-            case .group(let groupKind, let label, let letterPrefix, let exercises, let rounds, let restSeconds):
-                for round in 1...rounds {
-                    for (exIndex, exercise) in exercises.enumerated() {
-                        let miniMap = exercises.enumerated().map { idx, ex -> MiniMapItem in
-                            MiniMapItem(
-                                shortLabel: letterPrefix.map { "\($0)\(idx + 1)" } ?? "\(idx + 1)",
-                                name: ex.name,
-                                isCurrent: idx == exIndex
-                            )
-                        }
-                        let info = SetPageInfo(
-                            exercise: exercise,
-                            setNumber: exIndex + 1,
-                            totalSets: exercises.count,
-                            groupLabel: label,
-                            groupKind: groupKind,
-                            round: round,
-                            totalRounds: rounds,
-                            miniMap: miniMap
-                        )
-                        result.append(WorkoutStep(blockIndex: blockIndex, blockName: block.name, moodKey: exercise.moodKey, page: .set(info), exerciseName: exercise.name))
-                    }
-
-                    if let restSeconds, round < rounds {
-                        let nextName = exercises.first?.name ?? ""
-                        let restInfo = RestPageInfo(
-                            seconds: restSeconds,
-                            afterRound: round,
-                            totalRounds: rounds,
-                            groupLabel: label,
-                            nextUpName: nextName
-                        )
-                        result.append(WorkoutStep(blockIndex: blockIndex, blockName: block.name, moodKey: .rest, page: .rest(restInfo), exerciseName: nil))
-                    }
-                }
-            }
-        }
-
-        return result
-    }
-}

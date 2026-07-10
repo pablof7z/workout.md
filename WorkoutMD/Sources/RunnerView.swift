@@ -70,7 +70,7 @@ struct RunnerView: View {
         }
         .sheet(isPresented: $showingList) {
             WorkoutListView(
-                workoutName: MockWorkout.name,
+                workoutName: session.activePlan?.name ?? "Workout",
                 steps: session.steps,
                 currentID: session.currentStepID
             ) { id in
