@@ -702,6 +702,13 @@ public protocol NostrCoachProtocol: AnyObject, Sendable {
     func importNsec(nsec: String) throws 
     
     /**
+     * Publishes a NIP-29 leave-request (kind:9022, `["h", channel]`) to the
+     * main relay set, asking to leave `channel`. Returns the published
+     * event id (hex) once at least one relay has ack'd it.
+     */
+    func leave(channel: String) throws  -> String
+    
+    /**
      * Publishes a kind:9 chat message (`["h", channel]`, optional `["e",
      * reply_to]` / `["p", mention_pubkey]`) to the main relay set only.
      * Returns the published event id (hex) once at least one relay has
@@ -718,6 +725,19 @@ public protocol NostrCoachProtocol: AnyObject, Sendable {
      * least one relay has ack'd it (NIP-01 `OK,true`).
      */
     func publishProfile(name: String, about: String?, picture: String?) throws  -> String
+    
+    /**
+     * Publishes a standard NIP-29 join-request (kind:9021, `["h", channel]`
+     * + optional `["code", invite_code]`) to the main relay set, asking to
+     * join `channel` — for a channel this identity is not (yet) a member
+     * of. Publishing this alone doesn't grant membership: an open group's
+     * relay may auto-approve, while a closed group's admin must still
+     * follow up with a kind:9000 put-user (see [`NostrCoach::add_member`]).
+     * Returns the published event id (hex) once at least one relay has
+     * ack'd it — that's the join-request having been *sent*, not proof it
+     * was approved.
+     */
+    func requestToJoin(channel: String, inviteCode: String?) throws  -> String
     
     /**
      * Subscribes to kind:9 (+30315/30555/30023) for `#h = channel` and
@@ -888,6 +908,19 @@ open func importNsec(nsec: String)throws   {try rustCallWithError(FfiConverterTy
 }
     
     /**
+     * Publishes a NIP-29 leave-request (kind:9022, `["h", channel]`) to the
+     * main relay set, asking to leave `channel`. Returns the published
+     * event id (hex) once at least one relay has ack'd it.
+     */
+open func leave(channel: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeNostrError_lift) {
+    uniffi_workout_core_fn_method_nostrcoach_leave(self.uniffiClonePointer(),
+        FfiConverterString.lower(channel),$0
+    )
+})
+}
+    
+    /**
      * Publishes a kind:9 chat message (`["h", channel]`, optional `["e",
      * reply_to]` / `["p", mention_pubkey]`) to the main relay set only.
      * Returns the published event id (hex) once at least one relay has
@@ -917,6 +950,26 @@ open func publishProfile(name: String, about: String?, picture: String?)throws  
         FfiConverterString.lower(name),
         FfiConverterOptionString.lower(about),
         FfiConverterOptionString.lower(picture),$0
+    )
+})
+}
+    
+    /**
+     * Publishes a standard NIP-29 join-request (kind:9021, `["h", channel]`
+     * + optional `["code", invite_code]`) to the main relay set, asking to
+     * join `channel` — for a channel this identity is not (yet) a member
+     * of. Publishing this alone doesn't grant membership: an open group's
+     * relay may auto-approve, while a closed group's admin must still
+     * follow up with a kind:9000 put-user (see [`NostrCoach::add_member`]).
+     * Returns the published event id (hex) once at least one relay has
+     * ack'd it — that's the join-request having been *sent*, not proof it
+     * was approved.
+     */
+open func requestToJoin(channel: String, inviteCode: String?)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeNostrError_lift) {
+    uniffi_workout_core_fn_method_nostrcoach_request_to_join(self.uniffiClonePointer(),
+        FfiConverterString.lower(channel),
+        FfiConverterOptionString.lower(inviteCode),$0
     )
 })
 }
@@ -1978,10 +2031,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_workout_core_checksum_method_nostrcoach_import_nsec() != 29882) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_workout_core_checksum_method_nostrcoach_leave() != 31909) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_workout_core_checksum_method_nostrcoach_publish_message() != 11463) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_workout_core_checksum_method_nostrcoach_publish_profile() != 36053) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_workout_core_checksum_method_nostrcoach_request_to_join() != 9896) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_workout_core_checksum_method_nostrcoach_start_subscription() != 15498) {

@@ -200,6 +200,12 @@ private struct FabricSection: View {
     @Bindable var settings: AppSettings
     let fabric: FabricController
 
+    @State private var joinInviteCode = ""
+
+    private var hasChannel: Bool {
+        !settings.fabricChannel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var body: some View {
         Section {
             Toggle("Enable fabric", isOn: $settings.fabricEnabled)
@@ -272,6 +278,30 @@ private struct FabricSection: View {
             }
             .disabled(!settings.fabricEnabled)
 
+            if hasChannel {
+                VStack(alignment: .leading, spacing: 6) {
+                    TextField("Invite code (optional)", text: $joinInviteCode)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+
+                    Button {
+                        fabric.requestToJoin(inviteCode: joinInviteCode)
+                    } label: {
+                        Label("Request to join #\(settings.fabricChannel)", systemImage: "person.badge.plus")
+                    }
+
+                    Text("Sends a standard NIP-29 join-request — an admin still needs to approve it, unless the relay auto-approves an open channel.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if let lastJoinRequestResult = fabric.lastJoinRequestResult {
+                        Text(lastJoinRequestResult)
+                            .font(.caption)
+                            .foregroundStyle(lastJoinRequestResult.hasPrefix("Join request sent") ? Color.secondary : Color.orange)
+                    }
+                }
+            }
+
             NavigationLink("Recent fabric messages") {
                 FabricView(fabric: fabric)
             }
@@ -287,7 +317,7 @@ private struct FabricSection: View {
         } header: {
             Text("Coach fabric (tenex-edge)")
         } footer: {
-            Text("Membership is admin-granted — a closed channel lets anyone read but only members can post. Run the `tenex-edge channel add` command above (from wherever you manage your tenex-edge fabric) so the coach can actually post into your channel. The nsec lives only in the Keychain — never in Settings, UserDefaults, or logs.")
+            Text("Membership is admin-granted — a closed channel lets anyone read but only members can post. Run the `tenex-edge channel add` command above (from wherever you manage your tenex-edge fabric), or use \"Request to join\" to send a standard NIP-29 join-request instead of waiting on that out-of-band step. The nsec lives only in the Keychain — never in Settings, UserDefaults, or logs.")
         }
     }
 }
@@ -297,17 +327,39 @@ private struct FabricSection: View {
 private struct SyncSection: View {
     @Bindable var settings: AppSettings
     @State private var manager = SyncManager.shared
+    @State private var auth = GitHubAuth.shared
     @State private var token = ""
+    @State private var isAuthenticating = false
+    @State private var deviceCode: GitHubAuth.DeviceCodeResponse?
+    @State private var deviceFlowError: String?
+    @State private var showAdvancedPAT = false
+
+    /// `false` while `GitHubAuth.deviceFlowClientID` is unset/blank or still a `TODO_`-prefixed
+    /// placeholder — i.e. no GitHub OAuth App has been registered yet. The UI shows a calm "not
+    /// configured" state instead of letting the button fail against a `client_id` GitHub doesn't
+    /// recognize.
+    private var deviceFlowConfigured: Bool {
+        let id = GitHubAuth.deviceFlowClientID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !id.isEmpty && !id.hasPrefix("TODO_")
+    }
 
     var body: some View {
         Section {
-            SecureField("Personal access token", text: $token)
-                .textContentType(.password)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .onChange(of: token) { _, newValue in
-                    try? GitHubAuth.shared.setToken(newValue)
-                }
+            gitHubAuthContent
+
+            DisclosureGroup("Advanced: personal access token", isExpanded: $showAdvancedPAT) {
+                SecureField("Personal access token", text: $token)
+                    .textContentType(.password)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .onChange(of: token) { _, newValue in
+                        try? GitHubAuth.shared.setToken(newValue)
+                        if !newValue.isEmpty { Task { try? await auth.fetchCurrentUser() } }
+                    }
+                Text("Fallback for when device sign-in isn't set up yet: a fine-grained or classic PAT with repo scope, from https://github.com/settings/tokens.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
 
             TextField("Repo name", text: $settings.githubRepoName)
                 .textInputAutocapitalization(.never)
@@ -317,7 +369,7 @@ private struct SyncSection: View {
                 }
 
             LabeledContent("Status", value: manager.status.label)
-            LabeledContent("Signed in", value: manager.isAuthenticated ? "Yes" : "No token")
+            LabeledContent("Signed in", value: manager.isAuthenticated ? (auth.login.map { "@\($0)" } ?? "Yes") : "No")
             if let lastSyncedAt = manager.lastSyncedAt {
                 LabeledContent("Last synced", value: lastSyncedAt.formatted(date: .abbreviated, time: .shortened))
             }
@@ -358,11 +410,123 @@ private struct SyncSection: View {
         } header: {
             Text("Sync")
         } footer: {
-            Text("GitHub: paste a fine-grained or classic PAT with repo scope — sign-in-with-GitHub (device flow) needs a registered OAuth App client id and isn't wired up yet. iCloud: mirrors the same Markdown into this app's iCloud Drive container instead of (or alongside) GitHub — the two are independent and don't affect each other. Nothing here leaves the Keychain except the Markdown itself.")
+            Text(deviceFlowConfigured
+                ? "GitHub: \"Sign in with GitHub\" uses the standard OAuth device flow — no token to copy-paste. A personal access token remains available under Advanced as a fallback. iCloud: mirrors the same Markdown into this app's iCloud Drive container instead of (or alongside) GitHub — the two are independent and don't affect each other. Nothing here leaves the Keychain except the Markdown itself."
+                : "GitHub: device sign-in needs a registered OAuth App client id (GitHubAuth.deviceFlowClientID) that hasn't been set yet — paste a personal access token under Advanced in the meantime. iCloud: mirrors the same Markdown into this app's iCloud Drive container instead of (or alongside) GitHub. Nothing here leaves the Keychain except the Markdown itself.")
         }
         .onAppear {
             token = (try? GitHubAuth.shared.currentToken()) ?? ""
+            if auth.isAuthenticated { Task { try? await auth.fetchCurrentUser() } }
         }
+    }
+
+    /// The primary GitHub identity area: signed-in state (+ sign-out), the live device-code
+    /// prompt while a flow is in progress, the "Sign in with GitHub" button once configured, or a
+    /// calm "not configured yet" placeholder while `GitHubAuth.deviceFlowClientID` is still the
+    /// TODO — see `deviceFlowConfigured`.
+    @ViewBuilder
+    private var gitHubAuthContent: some View {
+        if auth.isAuthenticated {
+            LabeledContent("Signed in as", value: auth.login.map { "@\($0)" } ?? "GitHub")
+            Button(role: .destructive) {
+                signOut()
+            } label: {
+                Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
+            }
+        } else if let deviceCode {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Enter this code at \(deviceCode.verificationUri):")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Text(deviceCode.userCode)
+                        .font(.title2.monospaced().bold())
+                    Spacer()
+                    Button {
+                        UIPasteboard.general.string = deviceCode.userCode
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Copy code")
+                }
+                if let url = URL(string: deviceCode.verificationUri) {
+                    Link(destination: url) {
+                        Label("Open GitHub", systemImage: "arrow.up.forward.app")
+                    }
+                }
+                if isAuthenticating {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                        Text("Waiting for approval…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Button("Cancel") {
+                    isAuthenticating = false
+                    self.deviceCode = nil
+                }
+                .font(.caption)
+            }
+        } else if deviceFlowConfigured {
+            Button {
+                startDeviceFlow()
+            } label: {
+                if isAuthenticating {
+                    HStack {
+                        ProgressView()
+                        Text("Starting…")
+                    }
+                } else {
+                    Label("Sign in with GitHub", systemImage: "person.badge.key")
+                }
+            }
+            .disabled(isAuthenticating)
+        } else {
+            Label("GitHub sign-in not configured yet", systemImage: "info.circle")
+                .foregroundStyle(.secondary)
+        }
+
+        if let deviceFlowError {
+            Text(deviceFlowError)
+                .font(.caption)
+                .foregroundStyle(.orange)
+        }
+    }
+
+    /// Drives `GitHubAuth.authenticateWithDeviceFlow` to completion: shows the user/verification
+    /// code as soon as it's back from GitHub, polls in the background (the `Task` below is the
+    /// only thing blocked on that poll loop — the UI stays responsive), and on success clears the
+    /// code prompt and resolves the signed-in login via `fetchCurrentUser()`.
+    private func startDeviceFlow() {
+        isAuthenticating = true
+        deviceFlowError = nil
+        deviceCode = nil
+        Task {
+            do {
+                try await auth.authenticateWithDeviceFlow { response in
+                    Task { @MainActor in deviceCode = response }
+                }
+                await MainActor.run {
+                    isAuthenticating = false
+                    deviceCode = nil
+                }
+                _ = try? await auth.fetchCurrentUser()
+            } catch {
+                await MainActor.run {
+                    isAuthenticating = false
+                    deviceCode = nil
+                    deviceFlowError = String(describing: error)
+                }
+            }
+        }
+    }
+
+    private func signOut() {
+        try? auth.clearToken()
+        token = ""
+        deviceFlowError = nil
     }
 }
 

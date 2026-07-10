@@ -36,6 +36,15 @@ pub const KIND_GROUP_PUT_USER: u16 = 9000;
 /// kind:9002 — NIP-29 edit-metadata: used here to lock a group `closed`
 /// (only members may write) while keeping it `public` (anyone may read).
 pub const KIND_GROUP_EDIT_METADATA: u16 = 9002;
+/// kind:9021 — NIP-29 join-request: a non-member asks to join the group named
+/// by `h`, optionally presenting an invite `code`. The relay (for an open
+/// group) or its admins (via a follow-up kind:9000 put-user) grant actual
+/// membership — publishing this event alone doesn't make the signer a
+/// member.
+pub const KIND_GROUP_JOIN_REQUEST: u16 = 9021;
+/// kind:9022 — NIP-29 leave-request: an existing member asks to leave the
+/// group named by `h`.
+pub const KIND_GROUP_LEAVE_REQUEST: u16 = 9022;
 
 /// The `host` tag value stamped on every kind:0 profile this crate
 /// publishes, identifying Workout.md's coach as the profile's origin app —
@@ -119,6 +128,25 @@ pub fn group_put_user_event(channel: &str, pubkey: &str) -> EventBuilder {
     EventBuilder::new(kind(KIND_GROUP_PUT_USER), "")
         .tags([h_tag(channel), tag(&["p", pubkey])])
         .allow_self_tagging()
+}
+
+/// kind:9021 join-request: `["h", channel]` (required) + optional `["code",
+/// invite_code]` when the group gates entry behind an invite code. Standard
+/// NIP-29 flow for requesting access to a channel the signer isn't yet a
+/// member of — the relay (open group) or its admins (closed group, via a
+/// follow-up kind:9000) decide whether to actually grant membership.
+pub fn join_request_event(channel: &str, invite_code: Option<&str>) -> EventBuilder {
+    let mut tags = vec![h_tag(channel)];
+    if let Some(code) = invite_code.filter(|s| !s.is_empty()) {
+        tags.push(tag(&["code", code]));
+    }
+    EventBuilder::new(kind(KIND_GROUP_JOIN_REQUEST), "").tags(tags)
+}
+
+/// kind:9022 leave-request: `["h", channel]` — asks to leave a group the
+/// signer currently belongs to.
+pub fn leave_request_event(channel: &str) -> EventBuilder {
+    EventBuilder::new(kind(KIND_GROUP_LEAVE_REQUEST), "").tags([h_tag(channel)])
 }
 
 fn h_single() -> SingleLetterTag {
@@ -259,6 +287,43 @@ mod tests {
         assert_eq!(ev.kind.as_u16(), KIND_GROUP_PUT_USER);
         assert!(has_tag(&ev, "h", "myroom"));
         assert!(has_tag(&ev, "p", &member));
+    }
+
+    #[test]
+    fn join_request_event_is_kind_9021_with_h_tag_only_by_default() {
+        let ev = join_request_event("myroom", None)
+            .sign_with_keys(&Keys::generate())
+            .unwrap();
+        assert_eq!(ev.kind.as_u16(), KIND_GROUP_JOIN_REQUEST);
+        assert!(has_tag(&ev, "h", "myroom"));
+        assert!(!has_bare_tag(&ev, "code"));
+    }
+
+    #[test]
+    fn join_request_event_adds_code_tag_when_invite_code_given() {
+        let ev = join_request_event("myroom", Some("secret-123"))
+            .sign_with_keys(&Keys::generate())
+            .unwrap();
+        assert_eq!(ev.kind.as_u16(), KIND_GROUP_JOIN_REQUEST);
+        assert!(has_tag(&ev, "h", "myroom"));
+        assert!(has_tag(&ev, "code", "secret-123"));
+    }
+
+    #[test]
+    fn join_request_event_omits_code_tag_for_empty_invite_code() {
+        let ev = join_request_event("myroom", Some(""))
+            .sign_with_keys(&Keys::generate())
+            .unwrap();
+        assert!(!has_bare_tag(&ev, "code"));
+    }
+
+    #[test]
+    fn leave_request_event_is_kind_9022_with_h_tag() {
+        let ev = leave_request_event("myroom")
+            .sign_with_keys(&Keys::generate())
+            .unwrap();
+        assert_eq!(ev.kind.as_u16(), KIND_GROUP_LEAVE_REQUEST);
+        assert!(has_tag(&ev, "h", "myroom"));
     }
 
     #[test]
