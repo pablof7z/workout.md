@@ -4,7 +4,7 @@ date: 2026-07-10
 session: 576bd63b-163a-4e6a-8a3b-611cd421a386
 transcript: /Users/pablofernandez/.claude/projects/-Users-pablofernandez-Work-workout-md/576bd63b-163a-4e6a-8a3b-611cd421a386.jsonl
 salience: product
-status: active
+status: superseded
 subjects:
   - controls-view
   - effort-control
