@@ -121,3 +121,22 @@ targets:
         #     HTTP/2 (h2)/compression and ICU (via url/idna) crates.
         OTHER_LDFLAGS: "$(inherited) -lworkout_core -framework Security -framework CoreFoundation -framework SystemConfiguration -lz -liconv"
         ENABLE_USER_SCRIPT_SANDBOXING: NO
+    scheme:
+      testTargets:
+        - WorkoutMDTests
+  # Logic-only unit tests. No host app on purpose: it compiles `ThinkStripper.swift` directly
+  # (a pure, Foundation-only helper) rather than depending on the full `WorkoutMD` app target, so
+  # running tests doesn't require the Rust-core prebuild/cross-compile step.
+  WorkoutMDTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/WorkoutMDTests
+      - path: Sources/Coach/ThinkStripper.swift
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.0"
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 456SHKPP26

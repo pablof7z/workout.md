@@ -56,8 +56,10 @@ final class CoachController {
     }
 
     /// Sends the athlete's plain-language note for `exerciseName`, streaming the reply into
-    /// `session`'s transcript (via `WorkoutSession.beginStreamingReply`/`appendStreamingDelta`/
+    /// `session`'s transcript (via `WorkoutSession.beginStreamingReply`/`replaceStreamingText`/
     /// `finalizeStreamingReply`) and applying any tool call the model makes directly to `session`.
+    /// `CoachStreamSink` runs every delta and the final text through `ThinkStripper` first, so
+    /// reasoning-model `<think>`/`<thinking>` blocks never reach the transcript or persisted memory.
     /// Every new turn (the athlete's note, the coach's reply, and each applied-diff line) is
     /// persisted to `CoachNoteRecord` (`workout == nil` — a standalone, not-yet-session-attached
     /// note), which is what `historyJSON(for:modelContext:)` reads back to give the coach memory
@@ -303,6 +305,12 @@ private final class CoachStreamSink: CoachSink, @unchecked Sendable {
     private let onCompleted: (String) -> Void
     private let onError: (String) -> Void
 
+    /// Accumulates raw `on_text_delta` chunks and exposes the think-stripped "visible" projection —
+    /// see `ThinkStripper`. `CoachSink` callbacks for a single turn are delivered serially off one
+    /// background tokio task, so mutating this here (before hopping to main for the actual transcript
+    /// write) is safe without extra locking.
+    private var thinkBuffer = ThinkStripper.Buffer()
+
     init(session: WorkoutSession, exerciseName: String, onCompleted: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
         self.session = session
         self.exerciseName = exerciseName
@@ -311,8 +319,12 @@ private final class CoachStreamSink: CoachSink, @unchecked Sendable {
     }
 
     func onTextDelta(delta: String) {
+        // `visible` can both grow and *shrink* relative to the last delta (a model that omits the
+        // opening `<think>` tag makes everything before an eventual orphan `</think>` retroactively
+        // hidden), so the transcript placeholder is overwritten wholesale rather than appended to.
+        let visible = thinkBuffer.append(delta)
         DispatchQueue.main.async { [session, exerciseName] in
-            session.appendStreamingDelta(delta, exercise: exerciseName)
+            session.replaceStreamingText(visible, for: exerciseName)
         }
     }
 
@@ -322,9 +334,14 @@ private final class CoachStreamSink: CoachSink, @unchecked Sendable {
     func onToolCall(name: String, argsJson: String) {}
 
     func onCompleted(fullText: String) {
+        // The model's authoritative full text can still contain think blocks even after streaming
+        // deltas were stripped for display (e.g. a turn that only ever sent one big `on_completed`
+        // with no intervening deltas) — strip it too, so both the displayed transcript and anything
+        // persisted to `CoachNoteRecord`/memory (via `onCompleted` below) are the visible text.
+        let visible = ThinkStripper.strip(fullText)
         DispatchQueue.main.async { [session, exerciseName, onCompleted] in
-            session.finalizeStreamingReply(for: exerciseName, fullText: fullText)
-            onCompleted(fullText)
+            session.finalizeStreamingReply(for: exerciseName, fullText: visible)
+            onCompleted(visible)
         }
     }
 
