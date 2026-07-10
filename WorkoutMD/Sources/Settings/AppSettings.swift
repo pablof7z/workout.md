@@ -167,6 +167,15 @@ final class AppSettings {
         didSet { defaults.set(hasOnboarded, forKey: Keys.hasOnboarded) }
     }
 
+    // MARK: Training doctrine (M7)
+
+    /// Whether uploaded training-doctrine documents (`DoctrineStore`) are folded into the coach's
+    /// grounding context. On by default — once a user bothers adding doctrine, they expect it used
+    /// immediately, not behind a second opt-in. See `CoachController.send`'s `doctrineContext`.
+    var doctrineEnabled: Bool {
+        didSet { defaults.set(doctrineEnabled, forKey: Keys.doctrineEnabled) }
+    }
+
     private enum Keys {
         static let providerKind = "coach.providerKind"
         static let ollamaBaseURL = "coach.ollamaBaseURL"
@@ -185,6 +194,7 @@ final class AppSettings {
         static let sessionLengthMinutes = "prefs.sessionLengthMinutes"
         static let dislikedExercises = "prefs.dislikedExercises"
         static let hasOnboarded = "onboarding.hasOnboarded"
+        static let doctrineEnabled = "prefs.doctrineEnabled"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -236,6 +246,7 @@ final class AppSettings {
         }
 
         hasOnboarded = defaults.bool(forKey: Keys.hasOnboarded)
+        doctrineEnabled = (defaults.object(forKey: Keys.doctrineEnabled) as? Bool) ?? true
     }
 
     /// The system prompt actually sent to the coach engine on every turn: the user's override if
@@ -245,6 +256,25 @@ final class AppSettings {
         let trimmedOverride = systemPromptOverride.trimmingCharacters(in: .whitespacesAndNewlines)
         let base = trimmedOverride.isEmpty ? defaultCoachSystemPrompt() : trimmedOverride
         return base + verbosity.promptSuffix
+    }
+
+    /// A terse "grounding" block summarizing the athlete's configured goal/session length/dislikes —
+    /// folded into every coach turn's user-message context (see `CoachController.send`) so the claim
+    /// in Settings' Goals & preferences footer ("the coach sees these as grounding") is actually true
+    /// (M4). Empty only if `primaryGoal` is blank and there are no dislikes — `sessionLengthMinutes`
+    /// always has a value, so it's always included once anything else is.
+    var goalsContextSnippet: String {
+        var lines: [String] = []
+        let goal = primaryGoal.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !goal.isEmpty {
+            lines.append("Primary goal: \(goal).")
+        }
+        lines.append("Target session length: \(sessionLengthMinutes) minutes.")
+        if !dislikedExercises.isEmpty {
+            lines.append("Disliked exercises (avoid programming these without asking first): \(dislikedExercises.joined(separator: ", ")).")
+        }
+        guard !lines.isEmpty else { return "" }
+        return (["Athlete goals & preferences:"] + lines).joined(separator: "\n")
     }
 
     /// Builds the `ProviderConfig` the coach engine needs, given a credential freshly read from the

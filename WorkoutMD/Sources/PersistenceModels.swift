@@ -249,6 +249,13 @@ final class CoachNoteRecord {
     /// conversation history in chronological order across turns and app launches, independent of
     /// whether it's yet attached to a finished `WorkoutRecord`.
     var date: Date
+    /// The `PlanRecord.id` active when this note was said, if any — added (p2) so
+    /// `CoachController.historyJSON(for:planID:...)` can scope memory to the plan it was said under
+    /// instead of a bare `exerciseName` bleeding "Bench Press" notes across every plan the athlete has
+    /// ever run. `nil` for notes persisted before this field existed (or with no active plan at the
+    /// time) — those are treated as plan-agnostic and still included for any plan, rather than
+    /// silently dropped.
+    var planID: UUID?
 
     var workout: WorkoutRecord?
 
@@ -258,7 +265,8 @@ final class CoachNoteRecord {
         kind: RecordCoachKind,
         text: String,
         exerciseName: String? = nil,
-        date: Date = .now
+        date: Date = .now,
+        planID: UUID? = nil
     ) {
         self.id = id
         self.order = order
@@ -266,6 +274,7 @@ final class CoachNoteRecord {
         self.text = text
         self.exerciseName = exerciseName
         self.date = date
+        self.planID = planID
     }
 }
 
@@ -371,7 +380,7 @@ extension WorkoutSession {
             case .user: kind = .user
             case .diff: kind = .diff
             }
-            return CoachNoteRecord(order: index, kind: kind, text: message.text, exerciseName: exerciseName, date: message.date)
+            return CoachNoteRecord(order: index, kind: kind, text: message.text, exerciseName: exerciseName, date: message.date, planID: activePlan?.id)
         }
 
         return record

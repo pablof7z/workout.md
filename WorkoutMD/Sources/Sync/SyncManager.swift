@@ -36,7 +36,8 @@ final class SyncManager {
     private(set) var lastExternalChanges: [GitHubSync.ChangedFile] = []
 
     /// The coach-review hook: fires whenever `pull()` finds commits this app didn't make itself.
-    /// Wiring an actual review UI/flow is a later workstream — this closure is the plug point.
+    /// Re-exposed (in addition to being consumed below) so a future UI can still observe raw external
+    /// changes directly if it wants to, independent of the coach's own review turn.
     var onExternalChanges: (([GitHubSync.ChangedFile]) -> Void)?
 
     // MARK: - iCloud mirror
@@ -70,6 +71,11 @@ final class SyncManager {
         self.sync.onExternalChanges = { [weak self] changes in
             self?.lastExternalChanges = changes
             self?.onExternalChanges?(changes)
+            // M2: this is the "onExternalChanges consumer" — hand the changed Markdown to the coach
+            // for an actual review turn (not just ingestion) via the background `CoachController`
+            // singleton, since `SyncManager` itself has no live `WorkoutSession`/transcript to attach
+            // one to. See `CoachController.reviewExternalChanges` and `CoachReviewStore`.
+            CoachController.shared.reviewExternalChanges(changes)
         }
         self.icloud.onExternalChanges = { [weak self] changes in
             self?.onICloudExternalChanges?(changes)
