@@ -13,6 +13,28 @@ import SwiftUI
 ///
 /// Advancing between sets is a SWIPE DOWN (the vertical paging) — there is no Log & Next button.
 struct RunnerView: View {
+    /// Sizing for the floating `TopContextStrip` pill, shared with `StepPageView` so its `topReserve`
+    /// can be derived from the pill's *actual* rendered geometry instead of a guessed constant.
+    ///
+    /// IMPORTANT: `.overlay(alignment: .top)` on a view that has `.ignoresSafeArea()` still
+    /// implicitly offsets the overlay's alignment guide by the safe area — the safe area is NOT
+    /// truly ignored for overlay placement, only for the painted content. So the pill's padding
+    /// must NOT add `safeTop` again on top of that (verified empirically: adding it double-counts
+    /// the inset and pushes the pill roughly `safeTop` pt further down than intended, which is what
+    /// caused it to visually collide with page content below even though `topReserve` looked
+    /// correct on paper). `topOffset` here is a small *additional* gap beyond the safe area the
+    /// overlay already applies on its own.
+    ///
+    /// `height` is the pill's actual rendered height once `.frame(minHeight: 44)` is applied for
+    /// the HIG touch-target minimum. `totalReserve` adds `topOffset` + `height` + 24pt of clearance,
+    /// so page content never collides with it.
+    enum TopStripMetrics {
+        static let topOffset: CGFloat = 8
+        static let height: CGFloat = 44
+        static let clearance: CGFloat = 24
+        static let totalReserve: CGFloat = topOffset + height + clearance // 76
+    }
+
     @Environment(WorkoutSession.self) private var session
     var onFinish: (SessionSummary) -> Void
 
@@ -43,7 +65,7 @@ struct RunnerView: View {
                     TopContextStrip(step: current, stepIndex: currentIndex, totalSteps: session.steps.count) {
                         showingList = true
                     }
-                    .padding(.top, safeTop + 6)
+                    .padding(.top, TopStripMetrics.topOffset)
                 }
             }
             .overlay(alignment: .leading) {
@@ -58,7 +80,10 @@ struct RunnerView: View {
                         onSkip: skip,
                         onFinish: { onFinish(session.buildSummary()) }
                     )
-                    .padding(.bottom, safeBottom + 10)
+                    // Same overlay-alignment quirk as the top pill (see `TopStripMetrics`): the
+                    // safe area is already implicitly applied to a bottom-aligned overlay, so this
+                    // padding must not add `safeBottom` again.
+                    .padding(.bottom, 10)
                 }
             }
         }
@@ -134,6 +159,10 @@ private struct TopContextStrip: View {
         }
         .buttonStyle(.plain)
         .glassEffect(.regular.interactive(), in: .capsule)
+        // The capsule's visual height (~34pt, see `TopStripMetrics.height`) is under the 44pt HIG
+        // minimum touch target; grow the hit area without growing the visible glass shape.
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
         .accessibilityLabel("\(step.blockName), step \(stepIndex + 1) of \(totalSteps)")
         .accessibilityHint("Opens the full workout list")
     }

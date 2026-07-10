@@ -10,12 +10,15 @@ struct StepPageView: View {
     var topInset: CGFloat = 0
     var bottomInset: CGFloat = 0
 
-    /// Roughly the height of the top context strip + a little breathing room.
-    private var topReserve: CGFloat { topInset + 50 }
-    /// Tuned to the lightened bottom control cluster (effort control + reps/skip row) plus the
-    /// bottom safe area, so hero content never hides behind the floating controls while keeping the
-    /// middle of the page from reading as an empty void.
-    private var bottomReserve: CGFloat { bottomInset + 168 }
+    /// The floating `TopContextStrip` pill's rendered geometry (see `RunnerView.TopStripMetrics`):
+    /// its 6pt offset from the safe area + its ~34pt capsule height + 16pt of clearance, so page
+    /// content (the overline, the mini-map row) never collides with the pill sitting above it.
+    private var topReserve: CGFloat { topInset + RunnerView.TopStripMetrics.totalReserve }
+    /// Worst case is a reps-based set: a 52pt reps row (from the 52pt `StepperCircle`s) above a
+    /// 44pt effort/skip toolbar row, 12pt of spacing between them, plus the 10pt gap `RunnerView`
+    /// adds above the safe area (52 + 12 + 44 + 10 = 118), plus 26pt of clearance so hero content
+    /// never touches the glass toolbar.
+    private var bottomReserve: CGFloat { bottomInset + 144 }
 
     var body: some View {
         ZStack {
@@ -85,17 +88,17 @@ struct StepPageView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
+    /// Only shows round context (round number isn't on the floating `TopContextStrip` pill). The
+    /// block/group name itself is already in that pill, so it's omitted here to avoid the page
+    /// reading as duplicated/cluttered right under it.
+    @ViewBuilder
     private func overline(for info: SetPageInfo) -> some View {
-        Group {
-            if let group = info.groupLabel, let round = info.round, let totalRounds = info.totalRounds {
-                Text("\(group.uppercased()) · ROUND \(round) OF \(totalRounds)")
-            } else {
-                Text(step.blockName.uppercased())
-            }
+        if let round = info.round, let totalRounds = info.totalRounds {
+            Text("ROUND \(round) OF \(totalRounds)")
+                .font(.caption.weight(.semibold))
+                .tracking(1.2)
+                .foregroundStyle(.white.opacity(0.55))
         }
-        .font(.caption.weight(.semibold))
-        .tracking(1.2)
-        .foregroundStyle(.white.opacity(0.55))
     }
 
     // MARK: Rest page
@@ -105,7 +108,7 @@ struct StepPageView: View {
         VStack(spacing: 18) {
             Spacer()
 
-            Text("\(info.groupLabel.uppercased()) · REST")
+            Text("REST")
                 .font(.caption.weight(.semibold))
                 .tracking(1.2)
                 .foregroundStyle(.white.opacity(0.55))
@@ -287,22 +290,69 @@ private struct TimedHeroView: View {
     }
 }
 
-/// The giant rest countdown number — also Dynamic-Type-aware via `@ScaledMetric`.
+/// Live rest countdown ring, visually matching `TimedHeroView`'s ring (same 132pt size, 8pt stroke,
+/// mint→green completion color, monospaced-digit display). Unlike `TimedHeroView`, rest is passive:
+/// there's no "Start" tap, the countdown runs the moment the page appears. Driven by the same
+/// 0.05s Combine timer pattern, it fires a success haptic and flips to a "done" ring at zero, and
+/// it stops itself in `onDisappear` so it never keeps running once the page scrolls away.
 private struct RestCountdownText: View {
     let seconds: Int
-    @ScaledMetric(relativeTo: .largeTitle) private var size: CGFloat = 84
+
+    @State private var remaining: Double
+    @State private var isRunning = true
+    @State private var finished = false
+
+    private let tick = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
+
+    init(seconds: Int) {
+        self.seconds = seconds
+        _remaining = State(initialValue: Double(seconds))
+    }
+
+    private var progress: Double {
+        seconds > 0 ? max(0, min(1, remaining / Double(seconds))) : 0
+    }
+    private var displaySeconds: Int { Int(ceil(remaining)) }
 
     var body: some View {
-        VStack(spacing: 2) {
-            Text("\(seconds)")
-                .font(.system(size: size, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-            Text("seconds")
-                .font(.title3)
-                .foregroundStyle(.white.opacity(0.6))
+        ZStack {
+            Circle()
+                .stroke(.white.opacity(0.14), lineWidth: 8)
+            Circle()
+                .trim(from: 0, to: progress)
+                .stroke(
+                    finished ? Color.green : Color.mint,
+                    style: StrokeStyle(lineWidth: 8, lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
+                .animation(.linear(duration: 0.06), value: progress)
+
+            VStack(spacing: -2) {
+                Text("\(displaySeconds)")
+                    .font(.system(size: 46, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.white)
+                Text(finished ? "done" : "sec")
+                    .font(.footnote)
+                    .foregroundStyle(.white.opacity(0.6))
+            }
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(seconds) seconds rest")
+        .frame(width: 132, height: 132)
+        .onReceive(tick) { _ in
+            guard isRunning else { return }
+            remaining = max(0, remaining - 0.05)
+            if remaining <= 0 { complete() }
+        }
+        .onDisappear { isRunning = false }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(finished ? "Rest complete" : "\(displaySeconds) seconds rest remaining")
+    }
+
+    private func complete() {
+        remaining = 0
+        isRunning = false
+        withAnimation(.easeInOut) { finished = true }
+        Haptics.success()
     }
 }
 
