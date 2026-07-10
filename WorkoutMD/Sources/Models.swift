@@ -336,6 +336,26 @@ final class WorkoutSession {
         steps[idx].page = .set(info)
     }
 
+    /// The step immediately after `id` in `steps`, if any — the auto-advance target once a set
+    /// commits to `.done`/`.skipped` (see `advanceToNextStep(after:)` below).
+    func nextStepID(after id: WorkoutStep.ID) -> WorkoutStep.ID? {
+        guard let idx = steps.firstIndex(where: { $0.id == id }), idx + 1 < steps.count else { return nil }
+        return steps[idx + 1].id
+    }
+
+    /// Animates the native paging `ScrollView` (via its `.scrollPosition(id: $session.currentStepID)`
+    /// binding in `RunnerView`) to the set right after `id`, called once that set commits to
+    /// `.done`/`.skipped` — either by sliding `DoneSkipThumb` or by picking an effort value in the
+    /// tap-to-open prompt (see `StepPageView.SetGestureLayer`). A no-op past the last step. This
+    /// never fights the pager: it just moves the same `currentStepID` a normal swipe would, so the
+    /// user can always swipe back to re-edit any set afterward.
+    func advanceToNextStep(after id: WorkoutStep.ID) {
+        guard let next = nextStepID(after: id) else { return }
+        withAnimation(.easeInOut(duration: 0.35)) {
+            currentStepID = next
+        }
+    }
+
     // MARK: Live coach — streaming transcript
 
     /// Appends the athlete's own message to `exercise`'s transcript. Public entry point for

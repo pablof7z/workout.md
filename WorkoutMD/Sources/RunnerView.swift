@@ -43,11 +43,6 @@ struct RunnerView: View {
     var onFinish: (SessionSummary) -> Void
 
     @State private var showingList = false
-    /// The effort dial's expanded state, lifted up here (rather than living inside `ControlsView`)
-    /// now that the dial is its own top-trailing `.overlay` below — see that overlay's comment for
-    /// why it moved out of the bottom row entirely (it can't share the thumb's row without risking
-    /// an overlap during the thumb's commit fly-out).
-    @State private var effortExpanded = false
 
     var body: some View {
         @Bindable var session = session
@@ -84,23 +79,6 @@ struct RunnerView: View {
             .overlay(alignment: .leading) {
                 CoachEdgeHint()
                     .padding(.leading, 4)
-            }
-            .overlay(alignment: .topTrailing) {
-                // Deliberately top-trailing, not sharing the bottom row with the thumb — see
-                // `ControlsView`'s doc comment for why even an off-to-one-side placement in the
-                // thumb's row risks a momentary overlap during its commit fly-out, whereas a
-                // different corner entirely cannot, regardless of the thumb's travel distance.
-                if let current = currentStep, case .set = current.page {
-                    EffortControl(committed: session.rpe[current.id], expanded: $effortExpanded) { value in
-                        session.setEffort(value, for: current.id)
-                    }
-                    // Symmetric horizontal padding (not just `.trailing`) so the expanded scale —
-                    // which requests `maxWidth: .infinity` — insets evenly on both sides instead of
-                    // going flush to the leading edge; a fixed-size collapsed circle only "feels"
-                    // the trailing side of this anyway, since alignment does the positioning.
-                    .padding(.horizontal, 20)
-                    .padding(.top, TopStripMetrics.topOffset)
-                }
             }
             .overlay(alignment: .bottom) {
                 if currentStep != nil {

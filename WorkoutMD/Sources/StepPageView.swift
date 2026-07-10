@@ -22,8 +22,9 @@ struct StepPageView: View {
     private var topReserve: CGFloat { topInset + RunnerView.TopStripMetrics.totalReserve }
     /// Reserves space for the 60pt round done/skip thumb (see `DoneSkipThumb`) plus the 10pt gap
     /// `RunnerView`'s `ControlsView` overlay adds above the safe area (60 + 10 = 70), plus clearance
-    /// so hero content never touches it. The effort dial lives in its own top-trailing overlay now
-    /// (see `RunnerView`), not this row, so it no longer factors into this reserve.
+    /// so hero content never touches it. Effort is now reached by tapping the thumb itself (it opens
+    /// a transient sheet rather than living in a persistent overlay), so it doesn't factor into this
+    /// reserve either.
     private var bottomReserve: CGFloat { bottomInset + 92 }
 
     var body: some View {
@@ -151,30 +152,64 @@ struct StepPageView: View {
 /// Hosts THIS page's thumb, wiring its commits back to the shared session by `step.id`. Every page
 /// gets one of these — there's no "active vs. previewing" branch anymore: whichever set you're
 /// looking at, its thumb is live and reflects that set's own `state`.
+///
+/// A horizontal slide-right/slide-left commits `.done`/`.skipped` directly (see `DoneSkipThumb`,
+/// which always springs back to center once released — see #2 in `RunnerView`'s doc comment).
+/// A plain TAP on the thumb (negligible movement, disambiguated inside `DoneSkipThumb`) instead
+/// opens the "How hard was it?" effort prompt (`EffortPromptSheet`); the instant a value is picked
+/// there, it's recorded as this set's RPE AND the set is marked `.done` — both paths then auto-
+/// advance the pager to the next set via `WorkoutSession.advanceToNextStep(after:)`.
 private struct SetGestureLayer: View {
     @Environment(WorkoutSession.self) private var session
     let step: WorkoutStep
     let state: SetState
 
+    @State private var showingEffortPrompt = false
+
     var body: some View {
-        DoneSkipThumb(state: state) { newState in
-            session.setState(newState, for: step.id)
-            switch newState {
-            case .done: Haptics.success()
-            case .skipped: Haptics.impact(.light)
-            case .pending: Haptics.selection()
+        DoneSkipThumb(
+            state: state,
+            onCommit: { newState in
+                session.setState(newState, for: step.id)
+                switch newState {
+                case .done: Haptics.success()
+                case .skipped: Haptics.impact(.light)
+                case .pending: Haptics.selection()
+                }
+                if newState != .pending {
+                    session.advanceToNextStep(after: step.id)
+                }
+            },
+            onTapEffort: {
+                showingEffortPrompt = true
             }
+        )
+        .frame(maxWidth: .infinity)
+        .sheet(isPresented: $showingEffortPrompt) {
+            EffortPromptSheet(current: session.rpe[step.id]) { rpe in
+                session.setEffort(rpe, for: step.id)
+                session.setState(.done, for: step.id)
+                Haptics.success()
+                showingEffortPrompt = false
+                session.advanceToNextStep(after: step.id)
+            }
+            .presentationDetents([.height(260)])
+            .presentationDragIndicator(.visible)
         }
     }
 }
 
-/// The one interactive control in the runner besides the effort dial: a round glass thumb, with NO
-/// track, NO labels, NO container behind it — just the circle. It is a PERSISTENT 3-state control,
-/// live on every page, always: it renders `state` at rest (`.done` sits toward the right in green
-/// with a checkmark, `.skipped` toward the left in amber/orange with an ✕, `.pending` centered and
-/// neutral) and lets you slide it into any of the three states from wherever it currently rests —
-/// right toward done, left toward skipped, back toward the middle to clear it to pending — whether
-/// this page is "current" or one you've paged back to hours later to fix the weight.
+/// The one interactive control in the runner: a round glass thumb, with NO track, NO labels, NO
+/// container behind it — just the circle. It is a PERSISTENT 3-state control, live on every page,
+/// always — but unlike earlier revisions, it never rests off-center: whatever `state` is, the thumb
+/// always shows at dead-center bottom, and that state is conveyed purely by its icon + tint
+/// (`.pending` neutral arrows, `.done` green checkmark, `.skipped` amber ✕). Sliding it past
+/// `armThreshold` either side commits a new state and springs the thumb straight back to center to
+/// show it; a plain tap (negligible movement) instead opens the effort prompt via `onTapEffort`.
+///
+/// The slide track spans roughly 80% of the page's width (read live via the enclosing
+/// `GeometryReader`, not a fixed constant) so left = skip / right = done have a long, comfortable
+/// throw — previously this travel was a fixed ~184pt, only about a third of most screens.
 ///
 /// The `DragGesture` is attached with `.simultaneousGesture`, never `.gesture` — that's load-bearing.
 /// `.gesture` lets a child's recognizer win exclusively over an ancestor's (which is how buttons work
@@ -185,63 +220,75 @@ private struct SetGestureLayer: View {
 /// any opinion at all: a vertical-dominant drag — including one that starts right on top of the
 /// thumb — never moves it and fires no haptic, so the page behind it pages away exactly as if the
 /// thumb weren't there. Verified on-device: vertical swipes starting on the thumb still page.
+///
+/// A separate `TapGesture`, also `.simultaneousGesture`, handles the tap-for-effort path: SwiftUI's
+/// tap recognizer only succeeds within a small system movement tolerance, so a real committing drag
+/// (which must travel well past `armThreshold` to do anything) never also fires it, and a genuine
+/// tap never gets swallowed by the 2pt-`minimumDistance` `DragGesture` either (that one simply never
+/// arms `axis` for movement that small, so its `onEnded` no-ops).
 private struct DoneSkipThumb: View {
-    /// The set's committed state — the source of truth this thumb rests at when not being dragged.
+    /// The set's committed state — the source of truth this thumb always shows once at rest.
     let state: SetState
-    /// Fired once a drag crosses a threshold into a DIFFERENT state than `state` and is released.
+    /// Fired once a drag crosses `armThreshold` into a DIFFERENT state than `state` and is released.
     var onCommit: (SetState) -> Void
+    /// Fired on a plain tap (as opposed to a horizontal drag) — opens the effort prompt.
+    var onTapEffort: () -> Void
 
     private enum DragAxis { case horizontal, vertical }
 
-    /// Additional horizontal offset from `state`'s resting position, live only while a horizontal
-    /// drag is in progress; snaps back to 0 once released (the new resting position then comes from
-    /// the updated `state` prop itself, not from this).
+    /// Live horizontal offset from center while a horizontal drag is in progress; always animates
+    /// back to 0 once released — the thumb never rests anywhere but dead-center (state is shown by
+    /// icon + tint instead, see `glassStyle`/`icon`).
     @State private var dragTranslation: CGFloat = 0
     @State private var axis: DragAxis?
-    /// The state the thumb is provisionally previewing mid-drag (nil = just showing `state`).
+    /// The state the thumb is provisionally previewing mid-drag (nil = just showing `state`), only
+    /// set once the drag has actually crossed `armThreshold` either direction.
     @State private var provisional: SetState?
     @State private var hapticTier = 0
     @State private var isSettling = false
+    /// The page's own width, captured from the `GeometryReader` in `body` — `maxTravel`/`armThreshold`
+    /// are derived from this fraction rather than a fixed constant, so the slide's travel scales with
+    /// the actual screen instead of being a fixed distance that reads as narrow on larger phones.
+    @State private var trackWidth: CGFloat = 320
 
-    private let armThreshold: CGFloat = 64
-    private let maxTravel: CGFloat = 92
-    /// How far off-center the thumb rests once committed to `.done`/`.skipped` — short of `maxTravel`
-    /// so there's still plenty of room to drag further, and short of `armThreshold` so resting there
-    /// doesn't read as "still mid-drag".
-    private let restOffset: CGFloat = 40
     private let axisLockDistance: CGFloat = 8
     private let size: CGFloat = 60
+    /// The slide track spans ~80% of the page width.
+    private let trackWidthFraction: CGFloat = 0.8
+    /// Fraction of `maxTravel` a drag must cross to arm a commit — matches the old 64/92 ratio.
+    private let armThresholdFraction: CGFloat = 0.68
+
+    private var maxTravel: CGFloat { max(70, trackWidth * trackWidthFraction / 2 - size / 2) }
+    private var armThreshold: CGFloat { maxTravel * armThresholdFraction }
 
     private var displayState: SetState { provisional ?? state }
 
-    private func restingOffset(for value: SetState) -> CGFloat {
-        switch value {
-        case .pending: return 0
-        case .done: return restOffset
-        case .skipped: return -restOffset
-        }
-    }
-
-    private var offset: CGFloat {
-        restingOffset(for: state) + dragTranslation
-    }
-
     var body: some View {
-        Circle()
-            .fill(.clear)
-            .frame(width: size, height: size)
-            .glassEffect(glassStyle, in: .circle)
-            .overlay {
-                Image(systemName: icon)
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(.white)
-                    .contentTransition(.symbolEffect(.replace))
-            }
-            .offset(x: offset)
-            .allowsHitTesting(!isSettling)
-            .simultaneousGesture(drag)
-            .accessibilityLabel("Set status: \(accessibilityStateName)")
-            .accessibilityHint("Drag right to mark done, left to mark skipped, center for pending")
+        GeometryReader { geo in
+            Color.clear
+                .frame(width: geo.size.width, height: size)
+                .overlay {
+                    Circle()
+                        .fill(.clear)
+                        .frame(width: size, height: size)
+                        .glassEffect(glassStyle, in: .circle)
+                        .overlay {
+                            Image(systemName: icon)
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundStyle(.white)
+                                .contentTransition(.symbolEffect(.replace))
+                        }
+                        .offset(x: dragTranslation)
+                        .allowsHitTesting(!isSettling)
+                        .simultaneousGesture(drag)
+                        .simultaneousGesture(TapGesture().onEnded { handleTap() })
+                        .accessibilityLabel("Set status: \(accessibilityStateName)")
+                        .accessibilityHint("Tap to rate effort. Drag right to mark done, left to mark skipped.")
+                }
+                .onAppear { trackWidth = geo.size.width }
+                .onChange(of: geo.size.width) { _, newValue in trackWidth = newValue }
+        }
+        .frame(height: size)
     }
 
     private var glassStyle: Glass {
@@ -280,9 +327,8 @@ private struct DoneSkipThumb: View {
                 // Vertical-dominant (or not yet locked): don't move the thumb or fight the native
                 // scroll at all — the ScrollView's own simultaneous recognizer handles paging.
                 guard axis == .horizontal else { return }
-                let raw = restingOffset(for: state) + w
-                let clamped = max(-maxTravel, min(maxTravel, raw))
-                dragTranslation = clamped - restingOffset(for: state)
+                let clamped = max(-maxTravel, min(maxTravel, w))
+                dragTranslation = clamped
                 updateRamp(position: clamped)
             }
             .onEnded { _ in
@@ -290,6 +336,13 @@ private struct DoneSkipThumb: View {
                 guard axis == .horizontal, !isSettling else { return }
                 resolve()
             }
+    }
+
+    /// A plain tap (no meaningful drag ever recognized) opens the effort prompt.
+    private func handleTap() {
+        guard !isSettling else { return }
+        Haptics.selection()
+        onTapEffort()
     }
 
     /// Ramps a real `UIImpactFeedbackGenerator` as the thumb approaches `armThreshold` (one tap per
@@ -303,21 +356,22 @@ private struct DoneSkipThumb: View {
             generator.prepare()
             generator.impactOccurred(intensity: max(0.15, progress))
         }
-        let newProvisional: SetState = position > armThreshold ? .done : (position < -armThreshold ? .skipped : .pending)
-        if newProvisional != displayState {
+        let newProvisional: SetState? = position > armThreshold ? .done : (position < -armThreshold ? .skipped : nil)
+        if newProvisional != provisional {
             provisional = newProvisional
         }
     }
 
+    /// Always springs `dragTranslation` back to 0 (dead-center) regardless of outcome — only the
+    /// icon/tint change when a commit happens; the thumb itself never rests off to a side.
     private func resolve() {
-        let position = max(-maxTravel, min(maxTravel, restingOffset(for: state) + dragTranslation))
-        let newState: SetState = position > armThreshold ? .done : (position < -armThreshold ? .skipped : .pending)
-        let changed = newState != state
+        let clamped = max(-maxTravel, min(maxTravel, dragTranslation))
+        let newState: SetState? = clamped > armThreshold ? .done : (clamped < -armThreshold ? .skipped : nil)
         isSettling = true
         withAnimation(.spring(response: 0.32, dampingFraction: 0.68)) {
             dragTranslation = 0
             provisional = nil
-            if changed { onCommit(newState) }
+            if let newState, newState != state { onCommit(newState) }
         }
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 340_000_000)
@@ -355,7 +409,11 @@ private struct FloatingTargetRows: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        // Centered (rather than leading-aligned) horizontally on the screen — `.frame(maxWidth:
+        // .infinity)` stretches this view to the full page width inside `setContent`'s otherwise
+        // leading-aligned VStack, then `alignment: .center` centers the rows (and each other, when
+        // their widths differ) within that.
+        VStack(alignment: .center, spacing: 8) {
             FloatingStepRow(value: reps, unit: "reps") { delta in
                 Haptics.selection()
                 session.adjustReps(forStepID: stepID, delta: delta)
@@ -368,6 +426,7 @@ private struct FloatingTargetRows: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .center)
         // Always interactive — a set already marked done or skipped is still fully editable, so the
         // athlete can page back and fix the weight/reps after the fact without unmarking anything.
         .accessibilityElement(children: .contain)
