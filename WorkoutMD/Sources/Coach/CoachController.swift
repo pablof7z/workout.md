@@ -21,6 +21,14 @@ import SwiftData
 /// main-thread mutation (and its resulting string) is ready, never the UI thread itself.
 @Observable
 final class CoachController {
+    /// A second, independent `CoachController` for turns that don't belong to any live
+    /// `WorkoutSession` — today just `reviewExternalChanges(_:)` (M2), called from `SyncManager`'s
+    /// singleton init, which has no session/transcript to attach a turn to. Deliberately NOT the same
+    /// instance `WorkoutMDApp`'s `RootView` builds for the UI (that one is still constructed with a
+    /// plain `CoachController()` there) — the two never share transcript/streaming state, only the
+    /// same `AppSettings`/`FabricController` singletons, which is all a background review turn needs.
+    static let shared = CoachController()
+
     private let engine: CoachEngine
     private let settings: AppSettings
     /// The tenex-edge fabric — same singleton `WorkoutMDApp` injects via `.environment`, so a turn's
@@ -60,22 +68,34 @@ final class CoachController {
 
         applySettings()
 
+        let planID = session.activePlan?.id
+
         // Build history from whatever was persisted BEFORE this turn — otherwise the note we're
-        // about to persist below would double up as both `history_json` and `user_message`.
-        let historyJson = Self.historyJSON(for: exerciseName, modelContext: modelContext)
+        // about to persist below would double up as both `history_json` and `user_message`. Scoped to
+        // the current plan (p2) so "Bench Press" memory from a plan the athlete finished months ago
+        // doesn't bleed into the current one.
+        let historyJson = Self.historyJSON(for: exerciseName, planID: planID, modelContext: modelContext)
 
         session.appendUserMessage(text, to: exerciseName)
-        Self.persistNote(kind: .user, text: text, exercise: exerciseName, modelContext: modelContext)
+        Self.persistNote(kind: .user, text: text, exercise: exerciseName, planID: planID, modelContext: modelContext)
 
         let grounding = session.coachContext(for: exerciseName)
+        // M4: fold in the athlete's configured goal/session length/dislikes so the Settings claim
+        // ("the coach sees these as grounding") is actually true, plus (M7) a digest of any uploaded
+        // training doctrine, plus (M2) recent reviews of external Markdown changes — each empty (and
+        // cheap) when there's nothing to add.
+        let goalsContext = settings.goalsContextSnippet
+        let doctrineContext = settings.doctrineEnabled ? DoctrineStore.shared.digest() : ""
+        let reviewContext = CoachReviewStore.shared.contextSnippet()
         // Folds in recent tenex-edge fabric traffic (from the user's other agents) so the coach is
         // aware of it — e.g. it can note "there are new messages from your assistant" and factor them
         // in — before the athlete's own note. Empty (and a no-op `contextSnippet` call) when the
         // fabric is disabled or nothing new has arrived.
         let fabricContext = fabric.contextSnippet()
-        let combinedUserMessage = fabricContext.isEmpty
-            ? "\(grounding)\n\nAthlete note: \(text)"
-            : "\(grounding)\n\n\(fabricContext)\n\nAthlete note: \(text)"
+
+        let contextBlocks = [grounding, goalsContext, doctrineContext, reviewContext, fabricContext]
+            .filter { !$0.isEmpty }
+        let combinedUserMessage = (contextBlocks + ["Athlete note: \(text)"]).joined(separator: "\n\n")
 
         isSending = true
         session.beginStreamingReply(for: exerciseName)
@@ -87,7 +107,7 @@ final class CoachController {
                 self?.isSending = false
                 let trimmed = fullText.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else { return }
-                Self.persistNote(kind: .coach, text: fullText, exercise: exerciseName, modelContext: modelContext)
+                Self.persistNote(kind: .coach, text: fullText, exercise: exerciseName, planID: planID, modelContext: modelContext)
             },
             onError: { [weak self] _ in
                 self?.isSending = false
@@ -95,7 +115,7 @@ final class CoachController {
         )
 
         let host = WorkoutSessionCoachHost(session: session, exerciseName: exerciseName, fabric: fabric) { confirmation in
-            Self.persistNote(kind: .diff, text: confirmation, exercise: exerciseName, modelContext: modelContext)
+            Self.persistNote(kind: .diff, text: confirmation, exercise: exerciseName, planID: planID, modelContext: modelContext)
         }
 
         engine.sendMessage(
@@ -165,6 +185,62 @@ final class CoachController {
     stated session length and goal. Never include commentary outside the JSON object.
     """
 
+    // MARK: - External-commit review (M2)
+
+    /// Wired from `SyncManager`'s singleton init to `GitHubSync.onExternalChanges` — fires whenever
+    /// `GitHubSync.pull()` finds commits the app didn't author itself (someone edited a session's
+    /// Markdown on github.com, or pushed from a laptop). `pull()` already ingests the changed file
+    /// content; this is what actually has the coach *look* at it and produce a terse review note,
+    /// finishing the goal's "the agent reviews new commits" promise (previously only half-built).
+    ///
+    /// One dedicated, non-conversational turn (same shape as `generatePlan`) rather than something
+    /// attached to a live `WorkoutSession`'s transcript — a sync pull can happen with no session open
+    /// at all. The resulting note is appended to `CoachReviewStore`, which both makes it visible to a
+    /// "coach reviewed your changes" surface and folds it into every subsequent `send()`'s grounding.
+    func reviewExternalChanges(_ changes: [GitHubSync.ChangedFile]) {
+        guard !changes.isEmpty else { return }
+        applySettings()
+
+        let digest = changes.prefix(5).map { file -> String in
+            "### \(file.path) (commit: \(file.commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80)))\n\(file.content.prefix(1500))"
+        }.joined(separator: "\n\n")
+
+        let userMessage = """
+        The athlete (or someone else) just edited their training Markdown outside the app — these \
+        changes were pulled from the synced GitHub repo, not made by the app itself. Review what \
+        changed and reply with ONE terse sentence, in your normal dry coach voice, noting what you \
+        saw and how — if at all — it changes your approach going forward. No prose beyond that one \
+        sentence, no markdown, no bullet points, no preamble.
+
+        Changed file(s):
+        \(digest)
+        """
+
+        let sink = PlanGenerationSink(
+            onCompleted: { fullText in
+                let trimmed = fullText.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return }
+                CoachReviewStore.shared.append(CoachReviewNote(
+                    changedPaths: changes.map(\.path),
+                    commitMessage: changes.first?.commitMessage ?? "",
+                    note: trimmed
+                ))
+            },
+            onError: { _ in
+                // A failed review turn (offline model, bad config, ...) shouldn't surface as an app
+                // error — the sync pull itself already succeeded; the review is a best-effort extra.
+            }
+        )
+
+        engine.sendMessage(
+            systemPrompt: settings.effectiveSystemPrompt,
+            userMessage: userMessage,
+            historyJson: "[]",
+            sink: sink,
+            host: NoopCoachHost()
+        )
+    }
+
     // MARK: - Persisted memory
 
     /// Reads back up to `limit` persisted `CoachNoteRecord`s scoped to `exercise` (oldest first,
@@ -173,15 +249,33 @@ final class CoachController {
     /// encodes them as JSON. This is the coach's actual cross-launch memory: a fresh app launch,
     /// with no in-memory `WorkoutSession` transcript yet, still recalls what was said/applied last
     /// time this exercise came up.
-    private static func historyJSON(for exercise: String, modelContext: ModelContext, limit: Int = 24) -> String {
+    ///
+    /// (p2) Scoped two ways so memory stays coherent rather than bleeding a bare exercise name across
+    /// every plan/era the athlete has ever trained under: **plan** — only notes said under `planID`
+    /// (or with no plan recorded at all, e.g. notes persisted before this field existed) are eligible
+    /// — and **recency** — only the last `recencyWindowDays` days, so a stale note from a
+    /// long-abandoned run of the same plan doesn't keep echoing forever.
+    private static func historyJSON(
+        for exercise: String,
+        planID: UUID?,
+        modelContext: ModelContext,
+        limit: Int = 24,
+        recencyWindowDays: Int = 60
+    ) -> String {
+        let cutoff = Calendar.current.date(byAdding: .day, value: -recencyWindowDays, to: .now) ?? .distantPast
         var descriptor = FetchDescriptor<CoachNoteRecord>(
-            predicate: #Predicate { $0.exerciseName == exercise },
+            predicate: #Predicate { $0.exerciseName == exercise && $0.date >= cutoff },
             sortBy: [SortDescriptor(\.date, order: .forward)]
         )
-        descriptor.fetchLimit = 500 // generous cap before we take the trailing window below
-        guard let notes = try? modelContext.fetch(descriptor) else { return "[]" }
+        descriptor.fetchLimit = 500 // generous cap before the plan filter + trailing window below
+        guard let fetched = try? modelContext.fetch(descriptor) else { return "[]" }
 
-        let entries = notes.suffix(limit).map { note -> [String: String] in
+        // Plan filter done in Swift (rather than folded into the predicate above) to keep the
+        // `note.planID == nil || note.planID == planID` optional-equality logic simple and obviously
+        // correct rather than fighting `#Predicate`'s macro expressiveness over `Optional<UUID>`.
+        let scoped = fetched.filter { $0.planID == nil || $0.planID == planID }
+
+        let entries = scoped.suffix(limit).map { note -> [String: String] in
             let role = (note.kind == .user) ? "user" : "assistant"
             return ["role": role, "content": note.text]
         }
@@ -189,9 +283,9 @@ final class CoachController {
         return String(data: data, encoding: .utf8) ?? "[]"
     }
 
-    private static func persistNote(kind: RecordCoachKind, text: String, exercise: String, modelContext: ModelContext) {
+    private static func persistNote(kind: RecordCoachKind, text: String, exercise: String, planID: UUID? = nil, modelContext: ModelContext) {
         guard !text.isEmpty else { return }
-        let note = CoachNoteRecord(order: 0, kind: kind, text: text, exerciseName: exercise, date: .now)
+        let note = CoachNoteRecord(order: 0, kind: kind, text: text, exerciseName: exercise, date: .now, planID: planID)
         modelContext.insert(note)
         try? modelContext.save()
     }
