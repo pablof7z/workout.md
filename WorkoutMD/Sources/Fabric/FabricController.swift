@@ -68,6 +68,10 @@ final class FabricController {
     private(set) var npub: String?
     private(set) var messages: [FabricMessage] = []
     private(set) var lastPublishError: String?
+    /// The outcome of the most recent `requestToJoin` call — success or failure, in either case a
+    /// short human-readable string for the Settings fabric section's "Request to join" button.
+    /// `nil` until that button has been used at least once this launch.
+    private(set) var lastJoinRequestResult: String?
     /// Whether `messages` holds anything the coach grounding context hasn't been folded into yet —
     /// cleared by `contextSnippet()`, the one place a turn actually "consumes" the buffer. Lets a
     /// future UI badge say "new messages from your other agents" per the product vision.
@@ -164,6 +168,55 @@ final class FabricController {
                 DispatchQueue.main.async { [weak self] in self?.lastPublishError = nil }
             } catch {
                 DispatchQueue.main.async { [weak self] in self?.lastPublishError = String(describing: error) }
+            }
+        }
+    }
+
+    /// The Settings "Request to join" button — publishes a standard NIP-29 join-request (kind:9021)
+    /// for the configured channel, for a channel this device's coach identity isn't a member of yet
+    /// (unlike `enable()`/`publishProfile()`, which assume membership already exists). Ensures an
+    /// identity exists and (re)configures the engine first, same as `enable()`, so this works even
+    /// if the fabric toggle itself is off — requesting access is exactly what you'd do *before*
+    /// turning the toggle on for a closed channel. Publishing the request doesn't itself grant
+    /// membership: an open channel's relay may auto-approve, while a closed one still needs an
+    /// admin to follow up (out of band) with `tenex-edge channel add` — see the Settings footer.
+    /// Failures/successes both land in `lastJoinRequestResult` rather than `lastPublishError`, so
+    /// the two buttons' status text never clobber each other.
+    func requestToJoin(inviteCode: String? = nil) {
+        let channel = settings.fabricChannel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !channel.isEmpty else {
+            lastJoinRequestResult = "Set a channel slug first."
+            return
+        }
+
+        do {
+            let resolvedNpub = try ensureIdentity()
+            if !resolvedNpub.isEmpty { npub = resolvedNpub }
+        } catch {
+            lastJoinRequestResult = String(describing: error)
+            return
+        }
+
+        let relays = settings.fabricRelaysList
+        let indexerTrimmed = settings.fabricIndexerRelay.trimmingCharacters(in: .whitespaces)
+        let indexer = indexerTrimmed.isEmpty ? nil : indexerTrimmed
+        let trimmedCode = inviteCode?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let code = (trimmedCode?.isEmpty ?? true) ? nil : trimmedCode
+
+        lastJoinRequestResult = "Requesting…"
+        DispatchQueue.global(qos: .userInitiated).async { [engine] in
+            engine.configure(relays: relays, indexerRelay: indexer, channel: channel)
+            do {
+                _ = try engine.requestToJoin(channel: channel, inviteCode: code)
+                DispatchQueue.main.async { [weak self] in
+                    self?.lastJoinRequestResult =
+                        "Join request sent for #\(channel) — an admin still needs to approve it " +
+                        "(or the relay may auto-approve an open channel)."
+                }
+            } catch {
+                DispatchQueue.main.async { [weak self] in
+                    self?.lastJoinRequestResult = String(describing: error)
+                }
             }
         }
     }
