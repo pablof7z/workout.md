@@ -1,6 +1,0 @@
-{
-  "id": "42f3c-d5c59",
-  "ts": "2026-07-09T21:12:49Z",
-  "session": "42f3cd42-f2de-49b4-abff-fc10d0bedf8f",
-  "text": "- You jot how it felt in plain language → the coach replies **terse and dry** (per the spec's voice) and, crucially, **actually mutates the upcoming plan**:\n  - \"hurt my back a little\" → *\"Sharp or dull? Dropped your next set to 50%.\"* and the next Bench set's weight visibly changes.\n  - can also make program-level moves — *\"Skipping this for 2 weeks, easing back in\"* — and write a note onto the plan.\n  - each change shows as a clear applied-diff line, and the runner's upcoming sets reflect it. [...] Assistant: The coach flow works end-to-end and it's genuinely good:\n\n- **You:** \"This felt weird, hurt my back a little\" (trailing, dimmed)\n- **Coach:** *\"Sharp or dull? Cut your next set to 50%.\"* (terse, dry — exactly the spec's voice)\n- **Applied diff (green):** `↳ Next Bench Press: 135 → 70 lb`\n- **Follow-up chip:** **Deload 2 weeks**"
-}

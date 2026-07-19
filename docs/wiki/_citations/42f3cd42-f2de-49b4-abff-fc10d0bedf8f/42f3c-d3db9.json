@@ -1,6 +1,0 @@
-{
-  "id": "42f3c-d3db9",
-  "ts": "2026-07-09T21:12:59Z",
-  "session": "42f3cd42-f2de-49b4-abff-fc10d0bedf8f",
-  "text": "- **ControlsView.swift** — bottom glass cluster: `GlassEffectContainer`-wrapped Easy/Moderate/Hard `EffortPill`s (each paired with an SF Symbols gauge glyph, 44pt min height), an optional subtle reps `+`/`-` nudge (44×44 tap targets), and a second `GlassEffectContainer` with Note (`square.and.pencil`), Skip (`forward.end.fill`), and the primary `.glassProminent` Log & Next / Finish button with a `.symbolEffect(.bounce)` checkmark. Haptics fire exactly as specified: `.selection()` on effort pick, `.impact(.medium)` on Log & Next. Accessibility labels/values are set on all interactive controls and the mini-map. [...] - **DoneView.swift** — terse completion screen with `.success` haptic on appear, no gamification."
-}

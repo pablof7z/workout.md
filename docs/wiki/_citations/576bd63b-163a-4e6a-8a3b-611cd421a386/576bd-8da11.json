@@ -1,6 +1,0 @@
-{
-  "id": "576bd-8da11",
-  "ts": "2026-07-10T07:17:31Z",
-  "session": "576bd63b-163a-4e6a-8a3b-611cd421a386",
-  "text": "- `PlanEditorView.swift:135` literally hides the \"Rest between rounds\" stepper for `.straight` blocks (`if block.kind != .straight`), so you can't even configure it."
-}

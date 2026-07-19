@@ -1,6 +1,0 @@
-{
-  "id": "42f3c-2bb33",
-  "ts": "2026-07-09T21:12:49Z",
-  "session": "42f3cd42-f2de-49b4-abff-fc10d0bedf8f",
-  "text": "the UI should be tik-tok like where I only see what set I need to do next and perhaps cues or something that can be attached by the coach for the exercise. [...] - **Coach cues** attached per exercise; **effortless feedback** (Easy/Moderate/Hard pills), quick Note + Skip, big Log & Next. [...] - **StepPageView.swift** — single-set page: overline, mini-map (`MiniMapRow`, horizontal-scrollable, current movement marked with `play.fill`), exercise name/set count, hero target text, and the coach cue as a quiet glass pill (`quote.bubble` icon). Hero numbers use `@ScaledMetric` so the large custom sizes still respond to Dynamic Type. Rest pages get their own big countdown treatment. [...] - **Coach cues** attached per exercise, in a quiet glass quote pill."
-}

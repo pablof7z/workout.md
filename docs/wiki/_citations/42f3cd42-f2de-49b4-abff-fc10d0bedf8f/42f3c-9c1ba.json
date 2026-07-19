@@ -1,6 +1,0 @@
-{
-  "id": "42f3c-9c1ba",
-  "ts": "2026-07-09T21:12:44Z",
-  "session": "42f3cd42-f2de-49b4-abff-fc10d0bedf8f",
-  "text": "- **Coach = configurable policy**, not a persona. Default voice: dry, direct, sparse. Configurable at global/block/methodology/workout/override levels. [...] **3. Coach & context (settings that don't feel like settings)**\nWhere your goals, preferences, constraints, uploaded doctrine, and coach instructions live. Written in plain language (\"keep sessions under 45 min\", \"bias hypertrophy 8 weeks\", \"don't make me catch up\"). This is configuration-as-text, editable anytime, and it's the knobs behind every AI decision. [...] When you *do* want to talk to it (adjust the plan, ask why), there's a text/voice input — but it returns a **proposed change you can see and accept**, not chatter. The AI's output is almost always a *modification to the plan*, rendered as before/after, never a wall of encouragement."
-}
