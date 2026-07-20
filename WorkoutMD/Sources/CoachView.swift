@@ -16,6 +16,9 @@ struct CoachView: View {
 
     @State private var draft = ""
     @State private var showingSettings = false
+    @State private var byokConnector = BYOKProviderConnector()
+    @State private var isConnectingBYOK = false
+    @State private var connectionError: String?
     @FocusState private var inputFocused: Bool
 
     private var exerciseName: String { session.currentExerciseName ?? "This exercise" }
@@ -133,20 +136,70 @@ struct CoachView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             Button {
-                Haptics.impact(.light)
-                showingSettings = true
+                Task { await connectCoachWithBYOK() }
             } label: {
-                Text("Set up your coach in Settings")
+                HStack(spacing: 8) {
+                    if isConnectingBYOK {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "link.badge.plus")
+                    }
+                    Text(isConnectingBYOK ? "Opening BYOK…" : "Connect with BYOK")
+                }
                     .font(.subheadline.weight(.semibold))
                     .padding(.horizontal, 20)
                     .frame(height: 44)
             }
             .buttonStyle(.glassProminent)
             .tint(.indigo)
+            .disabled(isConnectingBYOK)
+            .accessibilityHint("Opens BYOK to choose a \(settings.providerKind.label) key securely")
             .padding(.top, 4)
+
+            Button {
+                Haptics.impact(.light)
+                showingSettings = true
+            } label: {
+                Text("Enter a key manually in Settings")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.7))
+            }
+            .buttonStyle(.plain)
+            .disabled(isConnectingBYOK)
+
+            if let connectionError {
+                Text(connectionError)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(.horizontal, 40)
-        .accessibilityElement(children: .combine)
+    }
+
+    /// Requests only the currently selected provider scope. The connector validates the callback
+    /// state and PKCE exchange; the returned raw key moves directly into Keychain and is never
+    /// logged or persisted by this view.
+    private func connectCoachWithBYOK() async {
+        connectionError = nil
+        isConnectingBYOK = true
+        defer { isConnectingBYOK = false }
+
+        let requestedProvider = settings.providerKind
+        do {
+            let grants = try await byokConnector.connect(providers: [requestedProvider])
+            guard let grant = grants.first(where: { $0.provider == requestedProvider }) else {
+                connectionError = "BYOK didn't return the selected provider."
+                return
+            }
+            _ = try CoachSecrets.saveBYOKGrant(grant)
+            settings.providerKind = grant.provider
+            coach.applySettings()
+            Haptics.success()
+        } catch {
+            connectionError = error.localizedDescription
+        }
     }
 
     // MARK: Transcript
