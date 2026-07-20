@@ -140,15 +140,17 @@ targets:
     scheme:
       testTargets:
         - WorkoutMDTests
-  # Logic-only unit tests. No host app on purpose: it compiles `ThinkStripper.swift` directly
-  # (a pure, Foundation-only helper) rather than depending on the full `WorkoutMD` app target, so
-  # running tests doesn't require the Rust-core prebuild/cross-compile step.
+  # `ThinkStripperTests` still compiles `ThinkStripper.swift` directly. OAuth contract tests use
+  # `@testable import WorkoutMD`, so this target also links the app target and runs its Rust-core
+  # prebuild (cached after the first build).
   WorkoutMDTests:
     type: bundle.unit-test
     platform: iOS
     sources:
       - path: Tests/WorkoutMDTests
       - path: Sources/Coach/ThinkStripper.swift
+    dependencies:
+      - target: WorkoutMD
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES

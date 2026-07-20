@@ -101,7 +101,8 @@ final class BYOKProviderConnector: NSObject, ASWebAuthenticationPresentationCont
         }
     }
 
-    private static func authorizationURL(providers: [CoachProviderKind], verifier: String, state: String) -> URL {
+    /// Internal so the OAuth contract can be covered by unit tests without presenting browser UI.
+    static func authorizationURL(providers: [CoachProviderKind], verifier: String, state: String) -> URL {
         var components = URLComponents(url: byokOrigin.appending(path: "authorize"), resolvingAgainstBaseURL: false)!
         components.queryItems = [
             URLQueryItem(name: "response_type", value: "code"),
@@ -116,7 +117,10 @@ final class BYOKProviderConnector: NSObject, ASWebAuthenticationPresentationCont
         return components.url!
     }
 
-    private static func authorizationCode(from url: URL, expectedState: String) throws -> String {
+    /// Validates the complete return URL before accepting either success or denial. Duplicate query
+    /// parameters are rejected rather than collapsed, since ambiguous `state`/`code` values should
+    /// never reach the token exchange.
+    static func authorizationCode(from url: URL, expectedState: String) throws -> String {
         guard url.scheme == callbackScheme,
               url.host == callbackHost,
               url.path.isEmpty || url.path == "/" else {
@@ -124,12 +128,17 @@ final class BYOKProviderConnector: NSObject, ASWebAuthenticationPresentationCont
         }
 
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        let params = Dictionary(uniqueKeysWithValues: (components?.queryItems ?? []).map { ($0.name, $0.value ?? "") })
-        if let error = params["error"], !error.isEmpty {
-            throw BYOKProviderError.accessDenied(error)
+        var params: [String: String] = [:]
+        for item in components?.queryItems ?? [] {
+            guard params.updateValue(item.value ?? "", forKey: item.name) == nil else {
+                throw BYOKProviderError.invalidCallback
+            }
         }
         guard params["state"] == expectedState else {
             throw BYOKProviderError.stateMismatch
+        }
+        if let error = params["error"], !error.isEmpty {
+            throw BYOKProviderError.accessDenied(error)
         }
         guard let code = params["code"], !code.isEmpty else {
             throw BYOKProviderError.missingCode
@@ -200,7 +209,8 @@ private struct BYOKTokenRequest: Encodable {
     }
 }
 
-private struct BYOKTokenResponse: Decodable {
+/// Internal so response compatibility with the live BYOK contract can be unit tested.
+struct BYOKTokenResponse: Decodable {
     let provider: String?
     let apiKey: String?
     let keyID: String?
@@ -247,7 +257,7 @@ private struct BYOKTokenResponse: Decodable {
     }
 }
 
-private struct BYOKTokenProvider: Decodable {
+struct BYOKTokenProvider: Decodable {
     let provider: String?
     let apiKey: String?
     let keyID: String?
