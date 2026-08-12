@@ -420,6 +420,50 @@ final class GitHubSync {
         return changed
     }
 
+    // MARK: - Full restore listing (fresh install / second device)
+
+    private struct DirectoryEntry: Decodable {
+        let name: String
+        let path: String
+        let type: String
+    }
+
+    /// Fetches the CURRENT content of every canonical Markdown file in the repo — `plan.md` and
+    /// everything under `sessions/` — regardless of commit history or the `lastSyncedSha` cursor
+    /// `pull()` tracks. `pull()` is a DIFF since the last sync (and, on a device's very first call,
+    /// establishes a baseline and returns nothing at all — see its doc comment); that's right for
+    /// "what changed that the coach should look at", but wrong for RESTORE, where a fresh install has
+    /// no prior baseline to diff against and needs everything that exists right now. `README.md` is
+    /// deliberately excluded — per domain-primitives.md §11 it's export-only, never a restore source.
+    func fetchAllMarkdownFiles() async throws -> [(path: String, content: String)] {
+        try await ensureRepo()
+        let owner = try await resolveOwner()
+        let token = try requireToken()
+
+        var results: [(path: String, content: String)] = []
+        if let plan = try await getFile(owner: owner, path: "plan.md", token: token), let text = plan.decodedText {
+            results.append(("plan.md", text))
+        }
+        if let entries = try await listDirectory(owner: owner, path: "sessions", token: token) {
+            for entry in entries where entry.type == "file" && entry.name.hasSuffix(".md") {
+                if let file = try await getFile(owner: owner, path: entry.path, token: token), let text = file.decodedText {
+                    results.append((entry.path, text))
+                }
+            }
+        }
+        return results
+    }
+
+    /// `GET /repos/{owner}/{repo}/contents/{path}` on a directory returns an array of entries rather
+    /// than a single file — `nil` on a 404 (the directory doesn't exist yet, e.g. no sessions synced).
+    private func listDirectory(owner: String, path: String, token: String) async throws -> [DirectoryEntry]? {
+        let url = GitHubAPI.baseURL.appendingPathComponent("repos/\(owner)/\(repoName)/contents/\(path)")
+        var request = URLRequest(url: url)
+        GitHubAPI.applyStandardHeaders(to: &request, token: token)
+        guard let (data, _) = try await GitHubAPI.send(request, session: session, allow404: true) else { return nil }
+        return try? GitHubAPI.decoder.decode([DirectoryEntry].self, from: data)
+    }
+
     private func fetchChangedSessionFiles(owner: String, commitSHA: String, token: String) async throws -> [ChangedFile] {
         var request = URLRequest(url: GitHubAPI.baseURL.appendingPathComponent("repos/\(owner)/\(repoName)/commits/\(commitSHA)"))
         GitHubAPI.applyStandardHeaders(to: &request, token: token)

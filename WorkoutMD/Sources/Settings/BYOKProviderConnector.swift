@@ -23,6 +23,7 @@ extension CoachProviderKind {
         switch self {
         case .openRouter: return "openrouter"
         case .ollama: return "ollama"
+        case .appleIntelligence: preconditionFailure("Apple Intelligence is not a BYOK provider")
         }
     }
 
@@ -49,7 +50,7 @@ final class BYOKProviderConnector: NSObject, ASWebAuthenticationPresentationCont
     private var session: ASWebAuthenticationSession?
 
     func connect(providers: [CoachProviderKind]) async throws -> [BYOKProviderGrant] {
-        let uniqueProviders = Self.unique(providers)
+        let uniqueProviders = Self.unique(providers.filter(\.supportsBYOK))
         guard !uniqueProviders.isEmpty else { throw BYOKProviderError.invalidProvider }
 
         let verifier = try Self.randomBase64URL(byteCount: 32)

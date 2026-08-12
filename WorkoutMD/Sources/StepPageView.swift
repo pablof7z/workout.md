@@ -41,7 +41,7 @@ struct StepPageView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipped()
         .overlay(alignment: .bottom) {
-            if case .set(let info) = step.page {
+            if case .set(let info) = step.page, !info.exercise.target.isTindeq {
                 SetGestureLayer(step: step, state: info.state)
                     .padding(.bottom, bottomInset + 14)
             }
@@ -52,47 +52,59 @@ struct StepPageView: View {
 
     @ViewBuilder
     private func setContent(_ info: SetPageInfo) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            overline(for: info)
+        if case .tindeq(let seconds, let targetMinKg, let targetMaxKg) = info.exercise.target {
+            TindeqSetView(
+                step: step,
+                info: info,
+                seconds: seconds,
+                targetMinKg: targetMinKg,
+                targetMaxKg: targetMaxKg,
+                topReserve: topReserve,
+                bottomReserve: bottomReserve
+            )
+        } else {
+            VStack(alignment: .leading, spacing: 18) {
+                overline(for: info)
 
-            if let miniMap = info.miniMap {
-                MiniMapRow(items: miniMap)
-            }
-
-            Spacer(minLength: 24)
-
-            VStack(alignment: .leading, spacing: 12) {
-                // No DONE/SKIPPED badge here — the set's status is rendered ONLY by its slider
-                // (`DoneSkipThumb`, bottom of this page), which is always interactive and always
-                // showing that set's true state.
-                Text(info.exercise.name)
-                    .font(.largeTitle.weight(.bold))
-                    .foregroundStyle(.white)
-
-                Text("Set \(info.setNumber) of \(info.totalSets)")
-                    .font(.title3.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.65))
-
-                if case .timed(let seconds) = info.exercise.target {
-                    TimedHeroView(totalSeconds: seconds)
-                        .padding(.top, 6)
-                } else {
-                    // Always editable, even for a set already marked done or skipped — the athlete
-                    // can page back to any set and fix its reps/weight after the fact.
-                    FloatingTargetRows(stepID: step.id)
-                        .padding(.top, 6)
+                if let miniMap = info.miniMap {
+                    MiniMapRow(items: miniMap)
                 }
+
+                Spacer(minLength: 24)
+
+                VStack(alignment: .leading, spacing: 12) {
+                    // No DONE/SKIPPED badge here — the set's status is rendered ONLY by its slider
+                    // (`DoneSkipThumb`, bottom of this page), which is always interactive and always
+                    // showing that set's true state.
+                    Text(info.exercise.name)
+                        .font(.largeTitle.weight(.bold))
+                        .foregroundStyle(.white)
+
+                    Text("Set \(info.setNumber) of \(info.totalSets)")
+                        .font(.title3.weight(.medium))
+                        .foregroundStyle(.white.opacity(0.65))
+
+                    if case .timed(let seconds) = info.exercise.target {
+                        TimedHeroView(totalSeconds: seconds)
+                            .padding(.top, 6)
+                    } else {
+                        // Always editable, even for a set already marked done or skipped — the athlete
+                        // can page back to any set and fix its reps/weight after the fact.
+                        FloatingTargetRows(stepID: step.id)
+                            .padding(.top, 6)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+
+                CoachCueView(text: info.exercise.cue)
+
+                Spacer(minLength: 12)
             }
-            .accessibilityElement(children: .combine)
-
-            CoachCueView(text: info.exercise.cue)
-
-            Spacer(minLength: 12)
+            .padding(.horizontal, 28)
+            .padding(.top, topReserve)
+            .padding(.bottom, bottomReserve)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 28)
-        .padding(.top, topReserve)
-        .padding(.bottom, bottomReserve)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
     /// Only shows round context (round number isn't on the floating `TopContextStrip` pill). The
@@ -532,8 +544,8 @@ private struct DoneSkipThumb: View {
 /// over the full-bleed background. Reads and mutates the shared `WorkoutSession` by `stepID` (rather
 /// than trusting the `SetPageInfo` snapshot passed down from `StepPageView`) so a − / + tap here is
 /// reflected immediately, matching the pattern the old bottom-toolbar reps stepper used. Edits land
-/// in the same live `steps` array the coach's `adjust_set` tool mutates, so they persist into the
-/// logged "actual" set once the session finishes.
+/// in the same live `steps` array the coach's `session_apply` tool mutates (via `WorkoutSession.
+/// setTarget`), so they persist into the logged "actual" set once the session finishes.
 ///
 /// Tapping the VALUE itself (as opposed to the − / + glyph buttons) instead opens `NumericEntryPopup`
 /// — a small sheet with a real numeric keyboard — so the athlete can type an exact value rather than

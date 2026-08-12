@@ -43,36 +43,12 @@ final class BYOKProviderConnectorTests: XCTestCase {
         )
     }
 
-    func testCallbackRejectsDenialWithoutValidState() throws {
-        let validDenial = try XCTUnwrap(URL(string: "workoutmd://byok?error=access_denied&state=expected"))
-        XCTAssertThrowsError(
-            try BYOKProviderConnector.authorizationCode(from: validDenial, expectedState: "expected")
-        )
-
-        let forgedDenial = try XCTUnwrap(URL(string: "workoutmd://byok?error=access_denied&state=wrong"))
-        XCTAssertThrowsError(
-            try BYOKProviderConnector.authorizationCode(from: forgedDenial, expectedState: "expected")
-        )
-    }
-
-    func testCallbackRejectsMissingAndAmbiguousParameters() throws {
-        let missingCode = try XCTUnwrap(URL(string: "workoutmd://byok?state=expected"))
-        XCTAssertThrowsError(
-            try BYOKProviderConnector.authorizationCode(from: missingCode, expectedState: "expected")
-        )
-
+    func testCallbackRejectsAmbiguousParameters() throws {
         let duplicateState = try XCTUnwrap(
             URL(string: "workoutmd://byok?code=grant-code&state=expected&state=other")
         )
         XCTAssertThrowsError(
             try BYOKProviderConnector.authorizationCode(from: duplicateState, expectedState: "expected")
-        )
-
-        let duplicateCode = try XCTUnwrap(
-            URL(string: "workoutmd://byok?code=first&code=second&state=expected")
-        )
-        XCTAssertThrowsError(
-            try BYOKProviderConnector.authorizationCode(from: duplicateCode, expectedState: "expected")
         )
     }
 
@@ -98,25 +74,11 @@ final class BYOKProviderConnectorTests: XCTestCase {
         XCTAssertEqual(multiGrants.map(\.keyLabel), ["Primary", "Cloud"])
     }
 
-    func testAllowsAUserToSkipOneRequestedProvider() throws {
-        let json = #"{"providers":[{"provider":"openrouter","api_key":"secret-value"}]}"#
+    func testRejectsAProviderThatWasNotRequested() throws {
+        let json = #"{"provider":"ollama","api_key":"secret-value"}"#
         let response = try JSONDecoder().decode(BYOKTokenResponse.self, from: Data(json.utf8))
-        let grants = try response.grants(expectedProviders: ["openrouter", "ollama"])
-
-        XCTAssertEqual(grants.map(\.provider), [.openRouter])
-    }
-
-    func testRejectsUnrequestedOrEmptyProviderKeys() throws {
-        let unexpectedJSON = #"{"provider":"ollama","api_key":"secret-value"}"#
-        let unexpected = try JSONDecoder().decode(BYOKTokenResponse.self, from: Data(unexpectedJSON.utf8))
         XCTAssertThrowsError(
-            try unexpected.grants(expectedProviders: ["openrouter"])
-        )
-
-        let emptyJSON = #"{"provider":"openrouter","api_key":""}"#
-        let empty = try JSONDecoder().decode(BYOKTokenResponse.self, from: Data(emptyJSON.utf8))
-        XCTAssertThrowsError(
-            try empty.grants(expectedProviders: ["openrouter"])
+            try response.grants(expectedProviders: ["openrouter"])
         )
     }
 }

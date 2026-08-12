@@ -9,12 +9,17 @@
 //!   tool call, completion, error) is pushed to a Swift-implemented
 //!   [`CoachSink`]; nothing is returned synchronously and nothing blocks the
 //!   caller's thread.
-//! - Tool calls the model makes (`adjust_set`, `skip_set`,
-//!   `deload_exercise`, `add_note`, `edit_plan` — see [`tools`]) are routed
-//!   through a Swift-implemented [`CoachHost`], because tool side effects
-//!   live in the app's `WorkoutSession`, not in this crate. The multi-turn
-//!   tool loop itself is rig's own (`Agent::stream_prompt(..).multi_turn(_)`)
-//!   — this crate does not hand-roll a second copy of it.
+//! - Tool calls the model makes (`plan_get`, `plan_apply`, `plan_revisions`,
+//!   `plan_restore`, `memory_add`, `memory_update`, `memory_query`,
+//!   `memory_remove`, `session_apply`, `escalate_to_reasoning` — see
+//!   [`tools`]) are routed through a Swift-implemented [`CoachHost`], because
+//!   tool side effects live in the app's repositories
+//!   (`PlanRepository`/`MemoryStore`/`ActiveSessionStore`) — or, for
+//!   `escalate_to_reasoning`, in the app's turn-orchestration layer
+//!   (`CoachController.converse`, which re-runs the turn on a stronger
+//!   model) — not in this crate. The multi-turn tool loop itself is rig's
+//!   own (`Agent::stream_prompt(..).multi_turn(_)`) — this crate does not
+//!   hand-roll a second copy of it.
 
 mod tools;
 
@@ -29,7 +34,10 @@ use rig::providers::{ollama, openrouter};
 use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
 use serde::Deserialize;
 
-use tools::{AddNoteTool, AdjustSetTool, DeloadExerciseTool, EditPlanTool, SkipSetTool};
+use tools::{
+    EscalateToReasoningTool, MemoryAddTool, MemoryQueryTool, MemoryRemoveTool, MemoryUpdateTool,
+    PlanApplyTool, PlanGetTool, PlanRestoreTool, PlanRevisionsTool, SessionApplyTool,
+};
 
 /// Default dry, terse coach voice (per the product spec: direct and sparse,
 /// never motivational filler). Swift may override this per-call by passing a
@@ -303,11 +311,16 @@ async fn run_turn(
             let agent = client
                 .agent(model)
                 .preamble(&system_prompt)
-                .tool(AdjustSetTool::new(host.clone()))
-                .tool(SkipSetTool::new(host.clone()))
-                .tool(DeloadExerciseTool::new(host.clone()))
-                .tool(AddNoteTool::new(host.clone()))
-                .tool(EditPlanTool::new(host))
+                .tool(PlanGetTool::new(host.clone()))
+                .tool(PlanApplyTool::new(host.clone()))
+                .tool(PlanRevisionsTool::new(host.clone()))
+                .tool(PlanRestoreTool::new(host.clone()))
+                .tool(MemoryAddTool::new(host.clone()))
+                .tool(MemoryUpdateTool::new(host.clone()))
+                .tool(MemoryQueryTool::new(host.clone()))
+                .tool(MemoryRemoveTool::new(host.clone()))
+                .tool(SessionApplyTool::new(host.clone()))
+                .tool(EscalateToReasoningTool::new(host))
                 .build();
             run_stream(agent, user_message, history, sink).await;
         }
@@ -326,11 +339,16 @@ async fn run_turn(
             let agent = client
                 .agent(model)
                 .preamble(&system_prompt)
-                .tool(AdjustSetTool::new(host.clone()))
-                .tool(SkipSetTool::new(host.clone()))
-                .tool(DeloadExerciseTool::new(host.clone()))
-                .tool(AddNoteTool::new(host.clone()))
-                .tool(EditPlanTool::new(host))
+                .tool(PlanGetTool::new(host.clone()))
+                .tool(PlanApplyTool::new(host.clone()))
+                .tool(PlanRevisionsTool::new(host.clone()))
+                .tool(PlanRestoreTool::new(host.clone()))
+                .tool(MemoryAddTool::new(host.clone()))
+                .tool(MemoryUpdateTool::new(host.clone()))
+                .tool(MemoryQueryTool::new(host.clone()))
+                .tool(MemoryRemoveTool::new(host.clone()))
+                .tool(SessionApplyTool::new(host.clone()))
+                .tool(EscalateToReasoningTool::new(host))
                 .build();
             run_stream(agent, user_message, history, sink).await;
         }

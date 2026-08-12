@@ -14,10 +14,12 @@ struct Exercise: Identifiable {
     let moodKey: MoodKey
 }
 
-/// What the lifter is meant to hit for a given set: either a rep/weight target or a timed hold.
+/// What the athlete is meant to hit for a given set. A Tindeq hold is deliberately its own case:
+/// duration and force corridor are plan data, not values inferred from an exercise name or cue.
 enum SetTarget {
     case reps(count: Int, weight: Double?)
     case timed(seconds: Int)
+    case tindeq(seconds: Int, targetMinKg: Double, targetMaxKg: Double)
 
     var displayString: String {
         switch self {
@@ -28,11 +30,20 @@ enum SetTarget {
             return "\(count) reps"
         case .timed(let seconds):
             return "\(seconds) sec"
+        case .tindeq(let seconds, let targetMinKg, let targetMaxKg):
+            return "\(seconds) sec · \(Self.kilograms(targetMinKg))–\(Self.kilograms(targetMaxKg)) kg"
         }
     }
 
     var isTimed: Bool {
-        if case .timed = self { return true }
+        switch self {
+        case .timed, .tindeq: return true
+        case .reps: return false
+        }
+    }
+
+    var isTindeq: Bool {
+        if case .tindeq = self { return true }
         return false
     }
 
@@ -40,6 +51,19 @@ enum SetTarget {
         if case .reps(_, let weight) = self { return weight }
         return nil
     }
+
+    private static func kilograms(_ value: Double) -> String {
+        value.rounded() == value ? String(Int(value)) : String(format: "%.1f", value)
+    }
+}
+
+/// The compact, durable result of one measured Tindeq hold. Raw 80 Hz samples stay ephemeral;
+/// history keeps the useful training facts and the runner keeps only a short display trace.
+struct TindeqSetResult: Codable, Equatable, Sendable {
+    var peakKg: Double
+    var averageKg: Double
+    var holdSeconds: Double
+    var timeInTargetSeconds: Double
 }
 
 /// How a block of work is organized.
@@ -94,12 +118,30 @@ struct MiniMapItem: Identifiable {
 /// The runner works over a flat list of steps — one per pager page — derived from the blocks above.
 /// `page` and `exerciseName` are mutable so the shared session can edit upcoming sets.
 struct WorkoutStep: Identifiable {
-    let id = UUID()
+    let id: UUID
     let blockIndex: Int
     let blockName: String
     let moodKey: MoodKey
     var page: StepPage
     var exerciseName: String?
+
+    /// `id` defaults to a fresh `UUID()` — every ordinary call site (`PlanConversion.toWorkoutSteps`,
+    /// `WorkoutSession.addSet`, ...) keeps constructing a brand-new step exactly as before. The
+    /// explicit `id:` parameter exists so `WorkoutSession.restore(from:modelContext:)`
+    /// (`Session/SessionState.swift`) can rebuild a resumed step with the SAME id it had before the
+    /// app was terminated — it's what `SetRecord.sourceStepID`, `WorkoutSession.rpe`,
+    /// `currentStepID`, and the running pager's SwiftUI list identity all key off. Written out by
+    /// hand (rather than relying on the compiler-synthesized memberwise initializer) because a
+    /// stored property with an inline default value (the old `let id = UUID()`) can't be overridden
+    /// by any initializer, synthesized or custom — it re-evaluates its own default unconditionally.
+    init(id: UUID = UUID(), blockIndex: Int, blockName: String, moodKey: MoodKey, page: StepPage, exerciseName: String?) {
+        self.id = id
+        self.blockIndex = blockIndex
+        self.blockName = blockName
+        self.moodKey = moodKey
+        self.page = page
+        self.exerciseName = exerciseName
+    }
 }
 
 enum StepPage {
@@ -228,6 +270,8 @@ final class WorkoutSession {
     var currentStepID: WorkoutStep.ID?
     /// Committed effort per set, as RPE 6–10.
     var rpe: [WorkoutStep.ID: Double] = [:]
+    /// Measured result per Tindeq-assisted set.
+    var tindeqResults: [WorkoutStep.ID: TindeqSetResult] = [:]
     /// Coach transcript per exercise name.
     var transcripts: [String: [CoachMessage]] = [:]
     /// Exercises the coach has offered a "Deload 2 weeks" follow-up for.
@@ -241,23 +285,64 @@ final class WorkoutSession {
     /// A snapshot of `steps` as they stood at session start, before any coach edit or reps-stepper
     /// nudge mutated a target in place. `WorkoutStep`/`SetPageInfo`/`Exercise` are all value types, so
     /// this copy is fully independent of `steps` and stays the "prescribed" record for history —
-    /// while `steps` (mutated live) stands in for "actual" once the session finishes.
-    let startedAt: Date = .now
+    /// while `steps` (mutated live) stands in for "actual" once the session finishes. Joined to
+    /// `steps` by stable `WorkoutStep.id`, never by position — see `makeRecord` (PersistenceModels.swift)
+    /// and `WorkoutSession.restore(from:modelContext:)` below.
+    let startedAt: Date
     let prescribedSteps: [WorkoutStep]
 
-    /// The persisted plan this session was started from — the same `PlanRecord` the coach's
-    /// `edit_plan` tool mutates (see `applyEditPlan` below), so a structural change lands both in
-    /// the durable plan (future sessions) and, best-effort, in this session's own live `steps`.
-    /// `nil` only for a session built directly from raw `steps` (e.g. previews/tests).
+    /// Fired after any mutation the durable active-session snapshot should reflect — wired by
+    /// `RootView` to a debounced `ActiveSessionStore.save` call (domain-primitives.md §8: the
+    /// in-progress workout is persisted continuously, not just at Done, so a crash/force-quit mid-
+    /// workout can be resumed). `nil` for sessions built outside the running app (tests, previews),
+    /// where it's simply never called.
+    var onChange: (() -> Void)?
+
+    /// The persisted plan this session was started from — `plan_apply` (`AppCoachHost`) mutates the
+    /// same `PlanRecord` via `PlanRepository`, independent of this session; `session_apply` is what
+    /// mirrors a live-workout change onto this session's own `steps`. `nil` only for a session built
+    /// directly from raw `steps` (e.g. previews/tests).
     var activePlan: PlanRecord?
-    /// Needed to persist `activePlan` mutations `edit_plan` makes. Not used for anything else —
-    /// completed-session history is still saved by the app root via `makeRecord`, not from here.
+    /// Not read by `WorkoutSession` itself anymore (`plan_apply`/`session_apply` route through
+    /// `AppCoachHost`'s own `modelContext`) — kept for call sites that still construct a session
+    /// with one and completed-session history, which is still saved by the app root via
+    /// `makeRecord`, not from here.
     var modelContext: ModelContext?
 
     init(steps: [WorkoutStep] = [], activePlan: PlanRecord? = nil, modelContext: ModelContext? = nil) {
         self.steps = steps
         self.prescribedSteps = steps
         self.currentStepID = steps.first?.id
+        self.startedAt = .now
+        self.activePlan = activePlan
+        self.modelContext = modelContext
+    }
+
+    /// Rebuilds a session with an explicit, independent `prescribedSteps` array, a preserved
+    /// `currentStepID`/`startedAt`/`rpe`/`transcripts`, and PRESERVED step ids — used only by
+    /// `WorkoutSession.restore(from:modelContext:)` (`Session/SessionState.swift`), where `steps`
+    /// (the live/actual array) may already differ structurally from `prescribedSteps` (frozen at the
+    /// original session start) because of coach edits made before the app was terminated. Ordinary
+    /// session start goes through the convenience initializer above instead, where the two arrays
+    /// start out identical.
+    init(
+        steps: [WorkoutStep],
+        prescribedSteps: [WorkoutStep],
+        currentStepID: WorkoutStep.ID?,
+        startedAt: Date,
+        rpe: [WorkoutStep.ID: Double] = [:],
+        tindeqResults: [WorkoutStep.ID: TindeqSetResult] = [:],
+        transcripts: [String: [CoachMessage]] = [:],
+        activePlan: PlanRecord? = nil,
+        modelContext: ModelContext? = nil
+    ) {
+        self.steps = steps
+        self.prescribedSteps = prescribedSteps
+        self.currentStepID = currentStepID
+        self.startedAt = startedAt
+        self.rpe = rpe
+        self.tindeqResults = tindeqResults
+        self.transcripts = transcripts
         self.activePlan = activePlan
         self.modelContext = modelContext
     }
@@ -292,14 +377,26 @@ final class WorkoutSession {
 
     func setEffort(_ value: Double, for id: WorkoutStep.ID) {
         rpe[id] = value
+        onChange?()
+    }
+
+    func setTindeqResult(_ result: TindeqSetResult, for id: WorkoutStep.ID) {
+        tindeqResults[id] = result
+        onChange?()
+    }
+
+    func clearTindeqResult(for id: WorkoutStep.ID) {
+        tindeqResults.removeValue(forKey: id)
+        onChange?()
     }
 
     // MARK: Reps/weight floating-row edits
     //
-    // Mirrors of `applyAdjustSet` (the coach's `adjust_set` tool) for the runner's always-visible
-    // reps/weight rows on the set page — the same mutation path, driven by direct − / + taps instead
-    // of a coach tool call. Both mutate `steps` in place so the change is live in the runner AND
-    // becomes the "actual" logged value once the session finishes (see `prescribedSteps` above).
+    // Mirrors of `setTarget` (the coach's `session_apply` tool, below) for the runner's
+    // always-visible reps/weight rows on the set page — the same mutation path, driven by direct
+    // − / + taps instead of a coach tool call. Both mutate `steps` in place so the change is live
+    // in the runner AND becomes the "actual" logged value once the session finishes (see
+    // `prescribedSteps` above).
 
     func adjustReps(forStepID id: WorkoutStep.ID, delta: Int) {
         guard let idx = steps.firstIndex(where: { $0.id == id }),
@@ -308,6 +405,7 @@ final class WorkoutSession {
         let newCount = max(0, count + delta)
         info.exercise.target = .reps(count: newCount, weight: weight)
         steps[idx].page = .set(info)
+        onChange?()
     }
 
     /// Adjusts the current step's weight by `delta` (e.g. ±5 lb), floored at 0. No-ops for steps
@@ -320,6 +418,7 @@ final class WorkoutSession {
         let newWeight = max(0, weight + delta)
         info.exercise.target = .reps(count: count, weight: newWeight)
         steps[idx].page = .set(info)
+        onChange?()
     }
 
     // MARK: Done / Skip (the runner's per-set thumb — always targets the set it lives on, whatever
@@ -334,6 +433,7 @@ final class WorkoutSession {
               case .set(var info) = steps[idx].page else { return }
         info.state = newState
         steps[idx].page = .set(info)
+        onChange?()
     }
 
     /// The step immediately after `id` in `steps`, if any — the auto-advance target once a set
@@ -374,7 +474,7 @@ final class WorkoutSession {
     }
 
     /// Overwrites the in-flight placeholder for `exercise` with `text` wholesale, called after every
-    /// `on_text_delta` chunk. Whole-value replacement rather than append: `CoachStreamSink` (see
+    /// `on_text_delta` chunk. Whole-value replacement rather than append: `CoachConverseSink` (see
     /// `CoachController.swift`) runs each raw delta through `ThinkStripper`, whose think-stripped
     /// "visible" projection of a growing raw buffer can *shrink* — not just grow — mid-stream (a
     /// model that omits the opening `<think>` tag makes everything before the eventual `</think>`
@@ -408,6 +508,7 @@ final class WorkoutSession {
             list[idx].text = resolved
         }
         transcripts[exercise] = list
+        onChange?()
     }
 
     /// Resolves the in-flight placeholder as an error line instead (the turn's `on_error`).
@@ -421,231 +522,165 @@ final class WorkoutSession {
         } else {
             append(CoachMessage(kind: .coach, text: "Error: \(message)"), to: exercise)
         }
+        onChange?()
     }
 
     // MARK: Live coach — grounding context for the model
-
-    /// A terse, factual summary of `exercise`'s sets — prescribed vs. actual/RPE so far, and which
-    /// remain upcoming — prefixed to every `user_message` sent to the coach engine. This is what
-    /// makes `adjust_set`/`skip_set` (which address a set by a zero-based `set_index` within the
-    /// exercise) meaningful: the model is told exactly which index is which set.
-    func coachContext(for exercise: String) -> String {
-        let indices = stepIndices(forExercise: exercise)
-        guard !indices.isEmpty else { return "Exercise: \(exercise) (not part of today's plan)." }
-
-        var lines = ["Exercise: \(exercise)"]
-        for (setIndex, stepIdx) in indices.enumerated() {
-            guard case .set(let info) = steps[stepIdx].page else { continue }
-            let prescribed = prescribedDisplay(atStepIndex: stepIdx)
-            var line = "- set_index \(setIndex): prescribed \(prescribed)"
-            switch info.state {
-            case .skipped:
-                line += " — skipped"
-            case .done:
-                line += " — done: \(info.exercise.target.displayString)"
-                if let r = rpe[steps[stepIdx].id] {
-                    line += ", RPE \(String(format: "%.1f", r))"
-                }
-            case .pending:
-                if stepIdx == currentIndex {
-                    line += " — current set"
-                    if let r = rpe[steps[stepIdx].id] {
-                        line += ", RPE \(String(format: "%.1f", r))"
-                    }
-                } else {
-                    line += " — upcoming"
-                }
-            }
-            lines.append(line)
-        }
-        if deloaded.contains(exercise) {
-            lines.append("Note: \(exercise) is already flagged for deload.")
-        }
-        return lines.joined(separator: "\n")
-    }
-
-    /// Indices into `steps` (== indices into `prescribedSteps`, the two arrays are parallel) for
-    /// every set page belonging to `exercise`, in plan order — this is the space `set_index`
-    /// addresses.
-    private func stepIndices(forExercise name: String) -> [Int] {
-        steps.indices.filter { idx in
-            if case .set(let info) = steps[idx].page { return info.exercise.name == name }
-            return false
-        }
-    }
 
     private func prescribedDisplay(atStepIndex idx: Int) -> String {
         guard idx < prescribedSteps.count, case .set(let info) = prescribedSteps[idx].page else { return "—" }
         return info.exercise.target.displayString
     }
 
-    // MARK: Live coach — tool application (CoachHost side effects)
-
-    /// Dispatches one coach tool call (routed here from `CoachHost.applyTool` in `CoachController`)
-    /// by name, decoding `argsJson` into the shape `core/workout-core/src/coach/tools.rs` defines,
-    /// mutating `steps` (so the runner's upcoming pages reflect it immediately), appending the
-    /// applied-diff transcript line, and returning a terse confirmation the model sees as the tool's
-    /// result. `transcriptExercise` is the exercise the Coach screen is currently scoped to — the
-    /// diff line is always shown there, even if the tool targets a different named exercise.
-    func applyCoachTool(name: String, argsJson: String, transcriptExercise: String) -> String {
-        let data = Data(argsJson.utf8)
-        let decoder = JSONDecoder()
-
-        switch name {
-        case "adjust_set":
-            struct Args: Decodable { let exercise: String; let set_index: Int; let new_weight: Double?; let new_reps: Int? }
-            guard let args = try? decoder.decode(Args.self, from: data) else {
-                return malformed(name, transcriptExercise)
+    /// A grounded listing of every set in the live session, one line per set, each carrying its own
+    /// stable `WorkoutStep.id` — this is what lets `session_apply` (`AppCoachHost`) address a set
+    /// precisely instead of by a fragile per-exercise index. Folded into `CoachContextAssembler`'s
+    /// context on every turn while a workout is running (domain-primitives.md §6). Format:
+    /// `- [id=<uuid>] Bench Press set 2/3: prescribed 135x10, state pending`.
+    func sessionGrounding() -> String {
+        var lines = ["Live workout — every set, addressable by [id=...] via session_apply:"]
+        for (idx, step) in steps.enumerated() {
+            guard case .set(let info) = step.page else { continue }
+            let prescribed = prescribedDisplay(atStepIndex: idx)
+            var line = "- [id=\(step.id.uuidString)] \(info.exercise.name) set \(info.setNumber)/\(info.totalSets): prescribed \(prescribed)"
+            switch info.state {
+            case .pending:
+                line += idx == currentIndex ? ", state current" : ", state pending"
+            case .done:
+                line += ", state done: \(info.exercise.target.displayString)"
+                if let r = rpe[step.id] { line += ", RPE \(String(format: "%.1f", r))" }
+            case .skipped:
+                line += ", state skipped"
             }
-            return applyAdjustSet(
-                exercise: args.exercise, setIndex: args.set_index,
-                newWeight: args.new_weight, newReps: args.new_reps,
-                transcriptExercise: transcriptExercise
-            )
-
-        case "skip_set":
-            struct Args: Decodable { let exercise: String; let set_index: Int }
-            guard let args = try? decoder.decode(Args.self, from: data) else {
-                return malformed(name, transcriptExercise)
-            }
-            return applySkipSet(exercise: args.exercise, setIndex: args.set_index, transcriptExercise: transcriptExercise)
-
-        case "deload_exercise":
-            struct Args: Decodable { let exercise: String; let weeks: Int }
-            guard let args = try? decoder.decode(Args.self, from: data) else {
-                return malformed(name, transcriptExercise)
-            }
-            return applyDeloadExercise(exercise: args.exercise, weeks: args.weeks, transcriptExercise: transcriptExercise)
-
-        case "add_note":
-            struct Args: Decodable { let scope: String; let text: String }
-            guard let args = try? decoder.decode(Args.self, from: data) else {
-                return malformed(name, transcriptExercise)
-            }
-            return applyAddNote(scope: args.scope, text: args.text, transcriptExercise: transcriptExercise)
-
-        case "edit_plan":
-            struct Args: Decodable { let instruction: String }
-            guard let args = try? decoder.decode(Args.self, from: data) else {
-                return malformed(name, transcriptExercise)
-            }
-            return applyEditPlan(instruction: args.instruction, transcriptExercise: transcriptExercise)
-
-        default:
-            let message = "Unknown tool \(name)."
-            append(CoachMessage(kind: .diff, text: message), to: transcriptExercise)
-            return message
+            lines.append(line)
         }
+        if !deloaded.isEmpty {
+            lines.append("Deload-flagged: \(deloaded.sorted().joined(separator: ", "))")
+        }
+        return lines.joined(separator: "\n")
     }
 
-    private func malformed(_ tool: String, _ transcriptExercise: String) -> String {
-        let message = "Could not parse arguments for \(tool)."
-        append(CoachMessage(kind: .diff, text: message), to: transcriptExercise)
-        return message
-    }
+    // MARK: Live coach — session_apply mutation (by stable step id)
+    //
+    // Driven by `AppCoachHost.sessionApply` (decoded `SessionOp`s), replacing the old exercise-name
+    // + `set_index` addressing (`applyAdjustSet`/`applySkipSet`) with the stable `WorkoutStep.id`
+    // every line of `sessionGrounding()` carries. Each method mutates `steps` in place (so the
+    // runner's upcoming pages reflect it immediately) and returns a terse confirmation string —
+    // callers are responsible for appending it to the transcript (`AppCoachHost`'s `onDiff`), the
+    // same separation `PlanRepository`/`MemoryStore` already have from their own callers.
 
-    /// `adjust_set` — changes an upcoming (or the current) set's weight and/or rep target in place.
-    private func applyAdjustSet(exercise: String, setIndex: Int, newWeight: Double?, newReps: Int?, transcriptExercise: String) -> String {
-        let indices = stepIndices(forExercise: exercise)
-        guard setIndex >= 0, setIndex < indices.count else {
-            let message = "No set \(setIndex) found for \(exercise)."
-            append(CoachMessage(kind: .diff, text: message), to: transcriptExercise)
-            return message
+    /// Adjusts the set at `id`'s target in place: reps and/or weight for a rep-based set, or —
+    /// mirroring the legacy `adjust_set` tool's schema — `reps` repurposed as the new duration in
+    /// seconds for a timed hold (there's no dedicated seconds field in `session_apply`'s wire
+    /// shape). `nil` leaves that field unchanged.
+    @discardableResult
+    func setTarget(reps: Int?, weight: Double?, forStepID id: WorkoutStep.ID) -> String {
+        guard let idx = steps.firstIndex(where: { $0.id == id }), case .set(var info) = steps[idx].page else {
+            return "No such set."
         }
-        let stepIdx = indices[setIndex]
-        guard case .set(var info) = steps[stepIdx].page else {
-            let message = "Could not adjust \(exercise) set \(setIndex)."
-            append(CoachMessage(kind: .diff, text: message), to: transcriptExercise)
-            return message
-        }
-
         var changes: [String] = []
         switch info.exercise.target {
-        case .reps(let count, let weight):
-            let finalReps = newReps ?? count
-            let finalWeight = newWeight ?? weight
-            if let newWeight, newWeight != weight {
-                changes.append(weight == nil ? "set \(Int(newWeight)) lb" : "\(Int(weight!)) → \(Int(newWeight)) lb")
+        case .reps(let count, let currentWeight):
+            let finalReps = reps ?? count
+            let finalWeight = weight ?? currentWeight
+            if let weight, weight != currentWeight {
+                changes.append(currentWeight == nil ? "set \(Int(weight)) lb" : "\(Int(currentWeight!)) → \(Int(weight)) lb")
             }
-            if let newReps, newReps != count {
-                changes.append("\(count) → \(newReps) reps")
+            if let reps, reps != count {
+                changes.append("\(count) → \(reps) reps")
             }
             info.exercise.target = .reps(count: finalReps, weight: finalWeight)
         case .timed(let seconds):
-            // The tool schema is generic across rep- and time-based sets; a timed hold repurposes
-            // `new_reps` as the new duration in seconds since there's no dedicated field for it.
-            if let newReps, newReps != seconds {
-                changes.append("\(seconds) → \(newReps) sec")
-                info.exercise.target = .timed(seconds: newReps)
+            if let reps, reps != seconds {
+                changes.append("\(seconds) → \(reps) sec")
+                info.exercise.target = .timed(seconds: reps)
+            }
+        case .tindeq(let seconds, let targetMinKg, let targetMaxKg):
+            if let reps, reps != seconds {
+                changes.append("\(seconds) → \(reps) sec")
+                info.exercise.target = .tindeq(
+                    seconds: reps, targetMinKg: targetMinKg, targetMaxKg: targetMaxKg)
             }
         }
-        steps[stepIdx].page = .set(info)
+        steps[idx].page = .set(info)
+        onChange?()
 
-        let confirmation = changes.isEmpty
-            ? "\(exercise) set \(setIndex + 1): no change (fields matched the current plan)."
-            : "\(exercise) set \(setIndex + 1): \(changes.joined(separator: ", "))."
-        append(CoachMessage(kind: .diff, text: confirmation), to: transcriptExercise)
-        return confirmation
+        let label = "\(info.exercise.name) set \(info.setNumber)"
+        return changes.isEmpty ? "\(label): no change (fields matched the current plan)." : "\(label): \(changes.joined(separator: ", "))."
     }
 
-    /// `skip_set` — marks a specific set skipped for the rest of the session.
-    private func applySkipSet(exercise: String, setIndex: Int, transcriptExercise: String) -> String {
-        let indices = stepIndices(forExercise: exercise)
-        guard setIndex >= 0, setIndex < indices.count else {
-            let message = "No set \(setIndex) found for \(exercise)."
-            append(CoachMessage(kind: .diff, text: message), to: transcriptExercise)
-            return message
-        }
-        let stepIdx = indices[setIndex]
-        guard case .set(var info) = steps[stepIdx].page else {
-            let message = "Could not skip \(exercise) set \(setIndex)."
-            append(CoachMessage(kind: .diff, text: message), to: transcriptExercise)
-            return message
+    /// Marks the set at `id` skipped for the rest of the session.
+    @discardableResult
+    func skip(forStepID id: WorkoutStep.ID) -> String {
+        guard let idx = steps.firstIndex(where: { $0.id == id }), case .set(var info) = steps[idx].page else {
+            return "No such set."
         }
         info.state = .skipped
-        steps[stepIdx].page = .set(info)
-
-        let confirmation = "\(exercise) set \(setIndex + 1): skipped."
-        append(CoachMessage(kind: .diff, text: confirmation), to: transcriptExercise)
-        return confirmation
+        steps[idx].page = .set(info)
+        onChange?()
+        return "\(info.exercise.name) set \(info.setNumber): skipped."
     }
 
-    /// `deload_exercise` — flags the exercise for a reduced-load block and records why.
-    private func applyDeloadExercise(exercise: String, weeks: Int, transcriptExercise: String) -> String {
-        deloaded.insert(exercise)
-        offerDeload.remove(exercise)
-        let confirmation = "\(exercise): deload scheduled for \(weeks) week\(weeks == 1 ? "" : "s")."
-        append(CoachMessage(kind: .diff, text: confirmation), to: transcriptExercise)
-        return confirmation
-    }
+    /// Renames every not-yet-logged (`.pending`) step whose exercise is `exerciseName` to `newName`
+    /// — addressed by exercise name (not a single step id) since a substitution applies to every
+    /// remaining set of that movement. Already-`.done`/`.skipped` sets are left untouched so
+    /// completed history stays factual (domain-primitives.md §8's "structural live edit preserves
+    /// history" invariant).
+    @discardableResult
+    func substitute(exerciseName: String, newName: String) -> String {
+        let trimmedName = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return "No replacement name given." }
 
-    /// `add_note` — records a freestanding note; no set/plan mutation.
-    private func applyAddNote(scope: String, text: String, transcriptExercise: String) -> String {
-        let confirmation = "Note (\(scope)): \(text)"
-        append(CoachMessage(kind: .diff, text: confirmation), to: transcriptExercise)
-        return confirmation
-    }
-
-    /// `edit_plan` — structural plan changes (swap an exercise, add a drop set, trim/add volume for
-    /// a body-part group) are real now: `PlanEditInterpreter` pattern-matches `instruction` and, when
-    /// it recognizes one, mutates the ACTIVE `PlanRecord` (persisted — affects future sessions) and
-    /// best-effort mirrors the same change onto this session's live `steps` (if one is running
-    /// against that plan) without disturbing any set already completed. Falls back to recording the
-    /// instruction as a plain plan note — same as this tool's original prototype behavior — when
-    /// nothing matches, rather than silently no-op'ing.
-    private func applyEditPlan(instruction: String, transcriptExercise: String) -> String {
-        guard let activePlan else {
-            let confirmation = "Plan note recorded: \(instruction)"
-            append(CoachMessage(kind: .diff, text: confirmation), to: transcriptExercise)
-            return confirmation
+        var changed = 0
+        for idx in steps.indices {
+            guard case .set(var info) = steps[idx].page,
+                  info.exercise.name == exerciseName, info.state == .pending else { continue }
+            info.exercise = Exercise(name: trimmedName, cue: info.exercise.cue, target: info.exercise.target, moodKey: info.exercise.moodKey)
+            steps[idx].page = .set(info)
+            steps[idx].exerciseName = trimmedName
+            changed += 1
         }
-        let applied = PlanEditInterpreter.applyToPlan(instruction: instruction, plan: activePlan)
-        if applied.changed {
-            try? modelContext?.save()
-            PlanEditInterpreter.applyToSession(instruction: instruction, session: self)
+        guard changed > 0 else { return "No upcoming sets found for \(exerciseName)." }
+        onChange?()
+        return "\(exerciseName) → \(trimmedName) for \(changed) upcoming set\(changed == 1 ? "" : "s")."
+    }
+
+    /// Inserts a new pending set immediately after `id`, cloning that set's exercise/block/group
+    /// context — `reps`/`weight` default to the anchor set's own target when omitted. Mirrors the
+    /// old `PlanEditInterpreter`'s drop-set insertion, generalized to any anchor set.
+    @discardableResult
+    func addSet(afterStepID id: WorkoutStep.ID, reps: Int?, weight: Double?) -> String {
+        guard let idx = steps.firstIndex(where: { $0.id == id }), case .set(let info) = steps[idx].page else {
+            return "No such set."
         }
-        append(CoachMessage(kind: .diff, text: applied.summary), to: transcriptExercise)
-        return applied.summary
+        let newTarget: SetTarget
+        switch info.exercise.target {
+        case .reps(let count, let currentWeight):
+            newTarget = .reps(count: reps ?? count, weight: weight ?? currentWeight)
+        case .timed(let seconds):
+            newTarget = .timed(seconds: reps ?? seconds)
+        case .tindeq(let seconds, let targetMinKg, let targetMaxKg):
+            newTarget = .tindeq(
+                seconds: reps ?? seconds, targetMinKg: targetMinKg, targetMaxKg: targetMaxKg)
+        }
+        let newExercise = Exercise(name: info.exercise.name, cue: info.exercise.cue, target: newTarget, moodKey: info.exercise.moodKey)
+        let newInfo = SetPageInfo(
+            exercise: newExercise,
+            setNumber: info.setNumber + 1,
+            totalSets: info.totalSets + 1,
+            groupLabel: info.groupLabel,
+            groupKind: info.groupKind,
+            round: info.round,
+            totalRounds: info.totalRounds,
+            miniMap: info.miniMap
+        )
+        let step = WorkoutStep(
+            blockIndex: steps[idx].blockIndex, blockName: steps[idx].blockName,
+            moodKey: info.exercise.moodKey, page: .set(newInfo), exerciseName: info.exercise.name
+        )
+        steps.insert(step, at: idx + 1)
+        onChange?()
+        return "Added a set for \(info.exercise.name)."
     }
 
     // MARK: Manual deload shortcut (Coach screen's "Deload 2 weeks" chip)
@@ -669,6 +704,7 @@ final class WorkoutSession {
 
     private func append(_ message: CoachMessage, to exercise: String) {
         transcripts[exercise, default: []].append(message)
+        onChange?()
     }
 
     // MARK: Summary
@@ -689,4 +725,3 @@ final class WorkoutSession {
         return SessionSummary(totalSets: setSteps.count, loggedSets: logged, averageRPE: average)
     }
 }
-

@@ -1,9 +1,16 @@
-//! Coach tool set: rig.rs `Tool` implementations for the five coach actions
-//! defined by the product spec. Every tool is a thin shim — side effects
-//! live in the Swift app's `WorkoutSession`, so `call()` never touches
-//! Workout.md state directly. Instead it hands `(name, args_json)` to the
-//! `CoachHost` callback the app provided for this turn and returns whatever
-//! string the host gives back as the tool result fed to the model.
+//! Coach tool set: rig.rs `Tool` implementations for the general, composable
+//! domain primitives defined by `docs/architecture/domain-primitives.md` §7.
+//! Every tool is a thin shim — side effects live in the Swift app (a
+//! `PlanRepository`/`MemoryStore`/`ActiveSessionStore`), so `call()` never
+//! touches Workout.md state directly. Instead it hands `(name, args_json)`
+//! to the `CoachHost` callback the app provided for this turn and returns
+//! whatever string the host gives back as the tool result fed to the model.
+//!
+//! There is no per-tool business logic here. The value of this module is
+//! the tool *name* plus the `definition()` description/schema that teaches
+//! the model the operation vocabulary — especially `plan_apply`, the single
+//! atomic plan-mutation primitive that replaces the old narrow tool family
+//! (`adjust_set`/`skip_set`/`deload_exercise`/`add_note`/`edit_plan`).
 
 use std::sync::Arc;
 
@@ -33,65 +40,143 @@ fn route_to_host(
 }
 
 // ---------------------------------------------------------------------
-// adjust_set
+// plan_get
+// ---------------------------------------------------------------------
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct PlanGetArgs {}
+
+#[derive(Clone)]
+pub struct PlanGetTool {
+    host: Arc<dyn CoachHost>,
+}
+
+impl PlanGetTool {
+    pub fn new(host: Arc<dyn CoachHost>) -> Self {
+        Self { host }
+    }
+}
+
+impl Tool for PlanGetTool {
+    const NAME: &'static str = "plan_get";
+    type Error = ToolCallError;
+    type Args = PlanGetArgs;
+    type Output = String;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Return the current training plan as a JSON snapshot (its stable \
+                session/block/exercise/set UUIDs, ordering, and the cursor to the next \
+                workout). Call this before editing so you can reference elements by their real \
+                ids."
+                .to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {},
+            }),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        route_to_host(&self.host, Self::NAME, &args)
+    }
+}
+
+// ---------------------------------------------------------------------
+// plan_apply
 // ---------------------------------------------------------------------
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct AdjustSetArgs {
-    pub exercise: String,
-    pub set_index: u32,
+pub struct PlanApplyArgs {
+    pub operations: Vec<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub new_weight: Option<f64>,
+    pub propose: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub new_reps: Option<u32>,
+    pub summary: Option<String>,
 }
 
 #[derive(Clone)]
-pub struct AdjustSetTool {
+pub struct PlanApplyTool {
     host: Arc<dyn CoachHost>,
 }
 
-impl AdjustSetTool {
+impl PlanApplyTool {
     pub fn new(host: Arc<dyn CoachHost>) -> Self {
         Self { host }
     }
 }
 
-impl Tool for AdjustSetTool {
-    const NAME: &'static str = "adjust_set";
+impl Tool for PlanApplyTool {
+    const NAME: &'static str = "plan_apply";
     type Error = ToolCallError;
-    type Args = AdjustSetArgs;
+    type Args = PlanApplyArgs;
     type Output = String;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Adjust the weight and/or rep target of a specific set in the \
-                athlete's current workout. Use when a load or rep change is warranted mid-session \
-                (e.g. the athlete reported a set felt too easy or too hard). Omit a field to leave \
-                it unchanged."
+            description: "The single plan-mutation tool. Apply (or propose) an ORDERED list \
+                of operations to the training plan ATOMICALLY — all succeed or none are \
+                applied. Use this for every plan change: creating a plan, importing a routine, \
+                editing a future workout, replacing an exercise, reordering, or restructuring \
+                the weekly split. Each operation in `operations` is a flat object with an \
+                `\"op\"` discriminator, one of: setPlanMeta, addSession, updateSession, \
+                removeSession, moveSession, setCursor, addBlock, updateBlock, removeBlock, \
+                moveBlock, addExercise, updateExercise, replaceExercise, removeExercise, \
+                moveExercise, addSet, updateSet, removeSet, moveSet. \
+                \n\nAddressing is always by UUID string. For an add* op you supply the NEW \
+                element's own uuid in its payload, and you may reuse that same uuid string as \
+                the parent id in a LATER op of the same batch — this is how you build a whole \
+                plan (session -> blocks -> exercises -> sets) in one atomic call. \
+                \n\n`addBlock` carries a FULL block subtree, e.g. \
+                {\"op\":\"addBlock\",\"sessionID\":\"<uuid>\",\"index\":0,\"block\":{\"id\":\"<uuid>\",\"kind\":\"straight\",\"label\":\"...\",\"rounds\":1,\"restSeconds\":null,\"exercises\":[{\"id\":\"<uuid>\",\"name\":\"Bench Press\",\"cue\":\"\",\"sets\":[{\"id\":\"<uuid>\",\"reps\":10,\"weight\":135,\"seconds\":null}]}]}}. \
+                `kind` is one of straight|superset|circuit. Likewise `addExercise` carries a \
+                full exercise (with its `sets` array) and `addSet` carries a full set. A set is \
+                one of: reps (`reps` plus optional `weight`), an ordinary timed hold (`seconds`), \
+                or a Tindeq force hold (`seconds`, `targetMinKg`, and `targetMaxKg`). For example, \
+                a seven-second Tindeq half-crimp set targeting 30-34 kg is \
+                {\"id\":\"<uuid>\",\"reps\":null,\"weight\":null,\"seconds\":7,\"targetMinKg\":30,\"targetMaxKg\":34}. \
+                \n\nUpdate ops (`updateSession`/`updateBlock`/`updateExercise`/`updateSet`/ \
+                `setPlanMeta`) use three-state fields: OMIT a field to leave it unchanged; pass \
+                JSON `null` to clear it (only meaningful for optional targets); pass a value to \
+                set it. `updateSet` supports `reps`, `weight`, `seconds`, `targetMinKg`, and \
+                `targetMaxKg`. Example: {\"op\":\"updateSet\",\"id\":\"<uuid>\",\"reps\":null,\
+                \"weight\":null,\"seconds\":7,\"targetMinKg\":30,\"targetMaxKg\":34} converts an \
+                existing set into a Tindeq force hold. Clear both target bounds to convert a \
+                Tindeq hold back to an ordinary timed hold. \
+                \n\n`setCursor` {\"op\":\"setCursor\",\"sessionID\":\"<uuid or null>\"} chooses \
+                which session is the next workout (there is no calendar). \
+                \n\n`propose` (default false, apply-by-default): pass true to return the \
+                change as an UNAPPLIED proposal for the athlete to preview/confirm rather than \
+                applying it immediately. Only propose when you are explicitly iterating on \
+                alternatives with the athlete; otherwise apply. \
+                \n\nEnd-to-end example — creating a brand-new one-session plan is a single call \
+                with two ops: first `{\"op\":\"addSession\",\"id\":\"S1\",\"name\":\"Upper A\",\"index\":0}`, \
+                then `{\"op\":\"addBlock\",\"sessionID\":\"S1\",\"index\":0,\"block\":{...}}` \
+                reusing the same session id."
                 .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "exercise": {
+                    "operations": {
+                        "type": "array",
+                        "items": { "type": "object" },
+                        "description": "Ordered list of PlanOp objects, each with an \"op\" \
+                            discriminator, applied atomically."
+                    },
+                    "propose": {
+                        "type": "boolean",
+                        "description": "If true, return an unapplied proposal instead of \
+                            applying immediately. Defaults to false (apply)."
+                    },
+                    "summary": {
                         "type": "string",
-                        "description": "Exercise name exactly as it appears in the plan"
-                    },
-                    "set_index": {
-                        "type": "integer",
-                        "description": "Zero-based index of the set within the exercise"
-                    },
-                    "new_weight": {
-                        "type": "number",
-                        "description": "New weight for the set, in the athlete's configured unit"
-                    },
-                    "new_reps": {
-                        "type": "integer",
-                        "description": "New target rep count for the set"
+                        "description": "Optional human-readable summary of the change, shown \
+                            in revision history."
                     }
                 },
-                "required": ["exercise", "set_index"]
+                "required": ["operations"]
             }),
         }
     }
@@ -102,52 +187,38 @@ impl Tool for AdjustSetTool {
 }
 
 // ---------------------------------------------------------------------
-// skip_set
+// plan_revisions
 // ---------------------------------------------------------------------
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct SkipSetArgs {
-    pub exercise: String,
-    pub set_index: u32,
-}
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct PlanRevisionsArgs {}
 
 #[derive(Clone)]
-pub struct SkipSetTool {
+pub struct PlanRevisionsTool {
     host: Arc<dyn CoachHost>,
 }
 
-impl SkipSetTool {
+impl PlanRevisionsTool {
     pub fn new(host: Arc<dyn CoachHost>) -> Self {
         Self { host }
     }
 }
 
-impl Tool for SkipSetTool {
-    const NAME: &'static str = "skip_set";
+impl Tool for PlanRevisionsTool {
+    const NAME: &'static str = "plan_revisions";
     type Error = ToolCallError;
-    type Args = SkipSetArgs;
+    type Args = PlanRevisionsArgs;
     type Output = String;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Mark a specific set as skipped for the rest of this session. Use \
-                when the athlete cannot or should not perform it (pain, equipment unavailable, \
-                out of time)."
+            description: "List restorable revisions of the current plan (id + summary + \
+                timestamp). Each applied change creates one."
                 .to_string(),
             parameters: json!({
                 "type": "object",
-                "properties": {
-                    "exercise": {
-                        "type": "string",
-                        "description": "Exercise name exactly as it appears in the plan"
-                    },
-                    "set_index": {
-                        "type": "integer",
-                        "description": "Zero-based index of the set within the exercise"
-                    }
-                },
-                "required": ["exercise", "set_index"]
+                "properties": {},
             }),
         }
     }
@@ -158,52 +229,46 @@ impl Tool for SkipSetTool {
 }
 
 // ---------------------------------------------------------------------
-// deload_exercise
+// plan_restore
 // ---------------------------------------------------------------------
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct DeloadExerciseArgs {
-    pub exercise: String,
-    pub weeks: u32,
+pub struct PlanRestoreArgs {
+    pub revision_id: String,
 }
 
 #[derive(Clone)]
-pub struct DeloadExerciseTool {
+pub struct PlanRestoreTool {
     host: Arc<dyn CoachHost>,
 }
 
-impl DeloadExerciseTool {
+impl PlanRestoreTool {
     pub fn new(host: Arc<dyn CoachHost>) -> Self {
         Self { host }
     }
 }
 
-impl Tool for DeloadExerciseTool {
-    const NAME: &'static str = "deload_exercise";
+impl Tool for PlanRestoreTool {
+    const NAME: &'static str = "plan_restore";
     type Error = ToolCallError;
-    type Args = DeloadExerciseArgs;
+    type Args = PlanRestoreArgs;
     type Output = String;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Schedule a deload (reduced load/volume block) for an exercise over \
-                the given number of upcoming weeks. Use when fatigue, a stalled plateau, or \
-                nagging pain call for backing off rather than pushing forward."
+            description: "Restore a previous plan revision by id (itself recorded as a new \
+                revision)."
                 .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "exercise": {
+                    "revision_id": {
                         "type": "string",
-                        "description": "Exercise name exactly as it appears in the plan"
-                    },
-                    "weeks": {
-                        "type": "integer",
-                        "description": "Number of upcoming weeks the deload should cover"
+                        "description": "Id of the revision to restore, from plan_revisions"
                     }
                 },
-                "required": ["exercise", "weeks"]
+                "required": ["revision_id"]
             }),
         }
     }
@@ -214,53 +279,118 @@ impl Tool for DeloadExerciseTool {
 }
 
 // ---------------------------------------------------------------------
-// add_note
+// memory_add
 // ---------------------------------------------------------------------
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct AddNoteArgs {
-    pub scope: String,
+pub struct MemoryAddArgs {
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
 }
 
 #[derive(Clone)]
-pub struct AddNoteTool {
+pub struct MemoryAddTool {
     host: Arc<dyn CoachHost>,
 }
 
-impl AddNoteTool {
+impl MemoryAddTool {
     pub fn new(host: Arc<dyn CoachHost>) -> Self {
         Self { host }
     }
 }
 
-impl Tool for AddNoteTool {
-    const NAME: &'static str = "add_note";
+impl Tool for MemoryAddTool {
+    const NAME: &'static str = "memory_add";
     type Error = ToolCallError;
-    type Args = AddNoteArgs;
+    type Args = MemoryAddArgs;
     type Output = String;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Attach a short note to the session, an exercise, or the plan for \
-                future reference. Use for observations worth remembering that don't warrant a \
-                plan change."
+            description: "Record a durable, freeform memory about the athlete (any \
+                coaching-relevant fact: goals, equipment, injuries, schedule, preferences, \
+                disliked movements, progression rules, anything). Optional tags for retrieval."
                 .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "scope": {
+                    "text": {
                         "type": "string",
-                        "description": "What the note is about: a session, an exercise name, or \
-                            the overall plan"
+                        "description": "The memory text, terse and factual"
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Optional freeform tags for later retrieval"
+                    }
+                },
+                "required": ["text"]
+            }),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        route_to_host(&self.host, Self::NAME, &args)
+    }
+}
+
+// ---------------------------------------------------------------------
+// memory_update
+// ---------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MemoryUpdateArgs {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
+}
+
+#[derive(Clone)]
+pub struct MemoryUpdateTool {
+    host: Arc<dyn CoachHost>,
+}
+
+impl MemoryUpdateTool {
+    pub fn new(host: Arc<dyn CoachHost>) -> Self {
+        Self { host }
+    }
+}
+
+impl Tool for MemoryUpdateTool {
+    const NAME: &'static str = "memory_update";
+    type Error = ToolCallError;
+    type Args = MemoryUpdateArgs;
+    type Output = String;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Edit an existing durable memory by id. Omit a field to leave it \
+                unchanged."
+                .to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Id of the memory to update, from memory_query"
                     },
                     "text": {
                         "type": "string",
-                        "description": "The note text, terse and factual"
+                        "description": "New memory text; omit to leave unchanged"
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "New tag list (replaces the existing tags); omit to \
+                            leave unchanged"
                     }
                 },
-                "required": ["scope", "text"]
+                "required": ["id"]
             }),
         }
     }
@@ -271,47 +401,224 @@ impl Tool for AddNoteTool {
 }
 
 // ---------------------------------------------------------------------
-// edit_plan
+// memory_query
 // ---------------------------------------------------------------------
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct EditPlanArgs {
-    pub instruction: String,
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct MemoryQueryArgs {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
 }
 
 #[derive(Clone)]
-pub struct EditPlanTool {
+pub struct MemoryQueryTool {
     host: Arc<dyn CoachHost>,
 }
 
-impl EditPlanTool {
+impl MemoryQueryTool {
     pub fn new(host: Arc<dyn CoachHost>) -> Self {
         Self { host }
     }
 }
 
-impl Tool for EditPlanTool {
-    const NAME: &'static str = "edit_plan";
+impl Tool for MemoryQueryTool {
+    const NAME: &'static str = "memory_query";
     type Error = ToolCallError;
-    type Args = EditPlanArgs;
+    type Args = MemoryQueryArgs;
     type Output = String;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Request a structural change to the training plan beyond a single \
-                set or exercise (e.g. swap an exercise, change the weekly split, add/remove a \
-                day). State the change as a plain instruction; the host applies it."
+            description: "Recall durable memories by substring and/or tags.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Substring to match against memory text; omit to skip \
+                            text filtering"
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Only return memories with at least one of these tags"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of memories to return"
+                    }
+                },
+            }),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        route_to_host(&self.host, Self::NAME, &args)
+    }
+}
+
+// ---------------------------------------------------------------------
+// memory_remove
+// ---------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MemoryRemoveArgs {
+    pub id: String,
+}
+
+#[derive(Clone)]
+pub struct MemoryRemoveTool {
+    host: Arc<dyn CoachHost>,
+}
+
+impl MemoryRemoveTool {
+    pub fn new(host: Arc<dyn CoachHost>) -> Self {
+        Self { host }
+    }
+}
+
+impl Tool for MemoryRemoveTool {
+    const NAME: &'static str = "memory_remove";
+    type Error = ToolCallError;
+    type Args = MemoryRemoveArgs;
+    type Output = String;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Delete a durable memory by id.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Id of the memory to delete, from memory_query"
+                    }
+                },
+                "required": ["id"]
+            }),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        route_to_host(&self.host, Self::NAME, &args)
+    }
+}
+
+// ---------------------------------------------------------------------
+// session_apply
+// ---------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SessionApplyArgs {
+    pub operations: Vec<serde_json::Value>,
+}
+
+#[derive(Clone)]
+pub struct SessionApplyTool {
+    host: Arc<dyn CoachHost>,
+}
+
+impl SessionApplyTool {
+    pub fn new(host: Arc<dyn CoachHost>) -> Self {
+        Self { host }
+    }
+}
+
+impl Tool for SessionApplyTool {
+    const NAME: &'static str = "session_apply";
+    type Error = ToolCallError;
+    type Args = SessionApplyArgs;
+    type Output = String;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Mutate the LIVE in-progress workout (only available when a session \
+                is active): adjust a set's target, skip a set, substitute an exercise, or add a \
+                set — addressing sets/exercises by their stable id from the live session \
+                grounding. `operations` is an ordered list applied atomically. This changes the \
+                active workout, NOT the plan — use plan_apply for future workouts. \
+                \n\nOperation vocabulary: \
+                `adjustSet` {\"op\":\"adjustSet\",\"setID\":\"<uuid>\",\"reps\":8,\"weight\":225} \
+                (omit a field to leave it unchanged); \
+                `skipSet` {\"op\":\"skipSet\",\"setID\":\"<uuid>\"}; \
+                `substituteExercise` {\"op\":\"substituteExercise\",\"exerciseName\":\"...\",\"newName\":\"...\"}; \
+                `addSet` {\"op\":\"addSet\",\"afterSetID\":\"<uuid>\",\"reps\":10,\"weight\":null}. \
+                If an operation addresses an id that can't be resolved in the live session, the \
+                host returns an error string for you to react to."
                 .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "instruction": {
-                        "type": "string",
-                        "description": "Plain-language instruction describing the plan change"
+                    "operations": {
+                        "type": "array",
+                        "items": { "type": "object" },
+                        "description": "Ordered list of SessionOp objects, each with an \"op\" \
+                            discriminator, applied atomically to the live workout."
                     }
                 },
-                "required": ["instruction"]
+                "required": ["operations"]
+            }),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        route_to_host(&self.host, Self::NAME, &args)
+    }
+}
+
+// ---------------------------------------------------------------------
+// escalate_to_reasoning
+// ---------------------------------------------------------------------
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct EscalateToReasoningArgs {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct EscalateToReasoningTool {
+    host: Arc<dyn CoachHost>,
+}
+
+impl EscalateToReasoningTool {
+    pub fn new(host: Arc<dyn CoachHost>) -> Self {
+        Self { host }
+    }
+}
+
+impl Tool for EscalateToReasoningTool {
+    const NAME: &'static str = "escalate_to_reasoning";
+    type Error = ToolCallError;
+    type Args = EscalateToReasoningArgs;
+    type Output = String;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Switch to the stronger reasoning model to work through a demanding \
+                task — e.g. building a full training plan from a vague description, or a \
+                complex multi-session repair. Call this as your ONLY action for the turn and do \
+                NOT answer the user yourself; the reasoning model will take over and respond. \
+                Use it sparingly — the fast model handles everyday coaching, quick set \
+                adjustments, and chat."
+                .to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": "Optional short note on why this task needs the \
+                            reasoning model"
+                    }
+                },
             }),
         }
     }
@@ -351,125 +658,293 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn adjust_set_routes_args_to_host_and_returns_its_response() {
-        let host = Arc::new(RecordingHost::new("applied"));
-        let tool = AdjustSetTool::new(host.clone());
+    async fn plan_get_routes_empty_args_and_returns_host_response() {
+        let host = Arc::new(RecordingHost::new(r#"{"id":"plan-1","sessions":[]}"#));
+        let tool = PlanGetTool::new(host.clone());
 
         let result = tool
-            .call(AdjustSetArgs {
-                exercise: "Back Squat".to_string(),
-                set_index: 2,
-                new_weight: Some(102.5),
-                new_reps: None,
+            .call(PlanGetArgs::default())
+            .await
+            .expect("plan_get call should succeed");
+
+        assert_eq!(result, r#"{"id":"plan-1","sessions":[]}"#);
+        let calls = host.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "plan_get");
+        assert_eq!(calls[0].1, "{}");
+    }
+
+    #[test]
+    fn plan_get_args_deserialize_from_empty_object() {
+        let args: PlanGetArgs = serde_json::from_str("{}").expect("plan_get args are all-optional");
+        let _ = args;
+    }
+
+    #[tokio::test]
+    async fn plan_apply_routes_operations_and_propose_flag() {
+        let host = Arc::new(RecordingHost::new("applied"));
+        let tool = PlanApplyTool::new(host.clone());
+
+        let result = tool
+            .call(PlanApplyArgs {
+                operations: vec![
+                    json!({"op": "addSession", "id": "11111111-1111-1111-1111-111111111111", "name": "Upper A", "index": 0}),
+                    json!({"op": "addBlock", "sessionID": "11111111-1111-1111-1111-111111111111", "index": 0, "block": {"id": "22222222-2222-2222-2222-222222222222", "kind": "straight", "label": "", "rounds": 1, "restSeconds": null, "exercises": []}}),
+                ],
+                propose: Some(true),
+                summary: Some("create Upper A".to_string()),
             })
             .await
-            .expect("adjust_set call should succeed");
+            .expect("plan_apply call should succeed");
 
         assert_eq!(result, "applied");
         let calls = host.calls.lock().unwrap();
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].0, "adjust_set");
+        assert_eq!(calls[0].0, "plan_apply");
         let parsed: serde_json::Value = serde_json::from_str(&calls[0].1).unwrap();
-        assert_eq!(parsed["exercise"], "Back Squat");
-        assert_eq!(parsed["set_index"], 2);
-        assert_eq!(parsed["new_weight"], 102.5);
-        assert!(parsed.get("new_reps").is_none());
+        assert_eq!(parsed["operations"].as_array().unwrap().len(), 2);
+        assert_eq!(parsed["operations"][0]["op"], "addSession");
+        assert_eq!(parsed["operations"][1]["op"], "addBlock");
+        assert_eq!(parsed["propose"], true);
+        assert_eq!(parsed["summary"], "create Upper A");
     }
 
     #[tokio::test]
-    async fn skip_set_routes_expected_shape() {
-        let host = Arc::new(RecordingHost::new("skipped"));
-        let tool = SkipSetTool::new(host.clone());
+    async fn plan_apply_omits_optional_fields_when_absent() {
+        let host = Arc::new(RecordingHost::new("applied"));
+        let tool = PlanApplyTool::new(host.clone());
 
-        let result = tool
-            .call(SkipSetArgs {
-                exercise: "Overhead Press".to_string(),
-                set_index: 0,
-            })
-            .await
-            .expect("skip_set call should succeed");
+        tool.call(PlanApplyArgs {
+            operations: vec![json!({"op": "setCursor", "sessionID": serde_json::Value::Null})],
+            propose: None,
+            summary: None,
+        })
+        .await
+        .expect("plan_apply call should succeed");
 
-        assert_eq!(result, "skipped");
         let calls = host.calls.lock().unwrap();
-        assert_eq!(calls[0].0, "skip_set");
         let parsed: serde_json::Value = serde_json::from_str(&calls[0].1).unwrap();
-        assert_eq!(parsed["exercise"], "Overhead Press");
-        assert_eq!(parsed["set_index"], 0);
+        assert!(parsed.get("propose").is_none());
+        assert!(parsed.get("summary").is_none());
     }
 
     #[tokio::test]
-    async fn deload_exercise_routes_expected_shape() {
-        let host = Arc::new(RecordingHost::new("deloaded"));
-        let tool = DeloadExerciseTool::new(host.clone());
+    async fn plan_revisions_routes_empty_args_and_returns_host_response() {
+        let host = Arc::new(RecordingHost::new(r#"[{"id":"rev-1"}]"#));
+        let tool = PlanRevisionsTool::new(host.clone());
 
         let result = tool
-            .call(DeloadExerciseArgs {
-                exercise: "Deadlift".to_string(),
-                weeks: 2,
-            })
+            .call(PlanRevisionsArgs::default())
             .await
-            .expect("deload_exercise call should succeed");
+            .expect("plan_revisions call should succeed");
 
-        assert_eq!(result, "deloaded");
-        let parsed: serde_json::Value =
-            serde_json::from_str(&host.calls.lock().unwrap()[0].1).unwrap();
-        assert_eq!(parsed["exercise"], "Deadlift");
-        assert_eq!(parsed["weeks"], 2);
+        assert_eq!(result, r#"[{"id":"rev-1"}]"#);
+        let calls = host.calls.lock().unwrap();
+        assert_eq!(calls[0].0, "plan_revisions");
+        assert_eq!(calls[0].1, "{}");
     }
 
     #[tokio::test]
-    async fn add_note_routes_expected_shape() {
-        let host = Arc::new(RecordingHost::new("noted"));
-        let tool = AddNoteTool::new(host.clone());
+    async fn plan_restore_routes_revision_id() {
+        let host = Arc::new(RecordingHost::new("restored"));
+        let tool = PlanRestoreTool::new(host.clone());
 
         let result = tool
-            .call(AddNoteArgs {
-                scope: "session".to_string(),
-                text: "Left knee felt tight on warmup sets.".to_string(),
+            .call(PlanRestoreArgs {
+                revision_id: "rev-42".to_string(),
             })
             .await
-            .expect("add_note call should succeed");
+            .expect("plan_restore call should succeed");
 
-        assert_eq!(result, "noted");
+        assert_eq!(result, "restored");
         let parsed: serde_json::Value =
             serde_json::from_str(&host.calls.lock().unwrap()[0].1).unwrap();
-        assert_eq!(parsed["scope"], "session");
-        assert_eq!(parsed["text"], "Left knee felt tight on warmup sets.");
+        assert_eq!(host.calls.lock().unwrap()[0].0, "plan_restore");
+        assert_eq!(parsed["revision_id"], "rev-42");
     }
 
     #[tokio::test]
-    async fn edit_plan_routes_expected_shape() {
-        let host = Arc::new(RecordingHost::new("edited"));
-        let tool = EditPlanTool::new(host.clone());
+    async fn memory_add_routes_text_and_tags() {
+        let host = Arc::new(RecordingHost::new("added"));
+        let tool = MemoryAddTool::new(host.clone());
 
         let result = tool
-            .call(EditPlanArgs {
-                instruction: "Swap Front Squat for Back Squat on lower days.".to_string(),
+            .call(MemoryAddArgs {
+                text: "Prefers dumbbells over barbells for pressing.".to_string(),
+                tags: Some(vec!["equipment".to_string(), "preference".to_string()]),
             })
             .await
-            .expect("edit_plan call should succeed");
+            .expect("memory_add call should succeed");
 
-        assert_eq!(result, "edited");
-        let parsed: serde_json::Value =
-            serde_json::from_str(&host.calls.lock().unwrap()[0].1).unwrap();
-        assert_eq!(
-            parsed["instruction"],
-            "Swap Front Squat for Back Squat on lower days."
-        );
+        assert_eq!(result, "added");
+        let calls = host.calls.lock().unwrap();
+        assert_eq!(calls[0].0, "memory_add");
+        let parsed: serde_json::Value = serde_json::from_str(&calls[0].1).unwrap();
+        assert_eq!(parsed["text"], "Prefers dumbbells over barbells for pressing.");
+        assert_eq!(parsed["tags"], json!(["equipment", "preference"]));
+    }
+
+    #[tokio::test]
+    async fn memory_add_omits_tags_when_absent() {
+        let host = Arc::new(RecordingHost::new("added"));
+        let tool = MemoryAddTool::new(host.clone());
+
+        tool.call(MemoryAddArgs {
+            text: "Trains three days a week.".to_string(),
+            tags: None,
+        })
+        .await
+        .expect("memory_add call should succeed");
+
+        let calls = host.calls.lock().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&calls[0].1).unwrap();
+        assert!(parsed.get("tags").is_none());
+    }
+
+    #[tokio::test]
+    async fn memory_update_routes_expected_shape() {
+        let host = Arc::new(RecordingHost::new("updated"));
+        let tool = MemoryUpdateTool::new(host.clone());
+
+        tool.call(MemoryUpdateArgs {
+            id: "mem-1".to_string(),
+            text: Some("Now trains four days a week.".to_string()),
+            tags: None,
+        })
+        .await
+        .expect("memory_update call should succeed");
+
+        let calls = host.calls.lock().unwrap();
+        assert_eq!(calls[0].0, "memory_update");
+        let parsed: serde_json::Value = serde_json::from_str(&calls[0].1).unwrap();
+        assert_eq!(parsed["id"], "mem-1");
+        assert_eq!(parsed["text"], "Now trains four days a week.");
+        assert!(parsed.get("tags").is_none());
+    }
+
+    #[tokio::test]
+    async fn memory_query_routes_partial_args() {
+        let host = Arc::new(RecordingHost::new("[]"));
+        let tool = MemoryQueryTool::new(host.clone());
+
+        tool.call(MemoryQueryArgs {
+            query: Some("knee".to_string()),
+            tags: None,
+            limit: Some(5),
+        })
+        .await
+        .expect("memory_query call should succeed");
+
+        let calls = host.calls.lock().unwrap();
+        assert_eq!(calls[0].0, "memory_query");
+        let parsed: serde_json::Value = serde_json::from_str(&calls[0].1).unwrap();
+        assert_eq!(parsed["query"], "knee");
+        assert!(parsed.get("tags").is_none());
+        assert_eq!(parsed["limit"], 5);
     }
 
     #[test]
-    fn adjust_set_args_reject_missing_required_fields() {
-        let bad: Result<AdjustSetArgs, _> = serde_json::from_str(r#"{"exercise":"Bench"}"#);
-        assert!(bad.is_err(), "set_index is required and must be rejected");
+    fn memory_query_args_deserialize_from_empty_object() {
+        let args: MemoryQueryArgs =
+            serde_json::from_str("{}").expect("memory_query args are all-optional");
+        assert!(args.query.is_none());
+        assert!(args.tags.is_none());
+        assert!(args.limit.is_none());
+    }
+
+    #[tokio::test]
+    async fn memory_remove_routes_id() {
+        let host = Arc::new(RecordingHost::new("removed"));
+        let tool = MemoryRemoveTool::new(host.clone());
+
+        tool.call(MemoryRemoveArgs {
+            id: "mem-7".to_string(),
+        })
+        .await
+        .expect("memory_remove call should succeed");
+
+        let calls = host.calls.lock().unwrap();
+        assert_eq!(calls[0].0, "memory_remove");
+        let parsed: serde_json::Value = serde_json::from_str(&calls[0].1).unwrap();
+        assert_eq!(parsed["id"], "mem-7");
+    }
+
+    #[tokio::test]
+    async fn session_apply_routes_operations() {
+        let host = Arc::new(RecordingHost::new("applied"));
+        let tool = SessionApplyTool::new(host.clone());
+
+        let result = tool
+            .call(SessionApplyArgs {
+                operations: vec![
+                    json!({"op": "adjustSet", "setID": "set-1", "weight": 225}),
+                    json!({"op": "skipSet", "setID": "set-2"}),
+                ],
+            })
+            .await
+            .expect("session_apply call should succeed");
+
+        assert_eq!(result, "applied");
+        let calls = host.calls.lock().unwrap();
+        assert_eq!(calls[0].0, "session_apply");
+        let parsed: serde_json::Value = serde_json::from_str(&calls[0].1).unwrap();
+        assert_eq!(parsed["operations"].as_array().unwrap().len(), 2);
+        assert_eq!(parsed["operations"][0]["op"], "adjustSet");
+        assert_eq!(parsed["operations"][1]["op"], "skipSet");
     }
 
     #[test]
-    fn adjust_set_args_parse_with_only_optional_fields_present() {
-        let args: AdjustSetArgs =
-            serde_json::from_str(r#"{"exercise":"Bench","set_index":1,"new_reps":8}"#)
-                .expect("new_weight is optional and may be omitted");
-        assert_eq!(args.new_weight, None);
-        assert_eq!(args.new_reps, Some(8));
+    fn plan_apply_args_reject_missing_operations() {
+        let bad: Result<PlanApplyArgs, _> = serde_json::from_str(r#"{"propose":true}"#);
+        assert!(bad.is_err(), "operations is required and must be rejected");
+    }
+
+    #[test]
+    fn session_apply_args_reject_missing_operations() {
+        let bad: Result<SessionApplyArgs, _> = serde_json::from_str(r#"{}"#);
+        assert!(bad.is_err(), "operations is required and must be rejected");
+    }
+
+    #[tokio::test]
+    async fn escalate_to_reasoning_routes_optional_reason_and_returns_host_response() {
+        let host = Arc::new(RecordingHost::new(
+            "Switching to the reasoning model to work through this.",
+        ));
+        let tool = EscalateToReasoningTool::new(host.clone());
+
+        let result = tool
+            .call(EscalateToReasoningArgs {
+                reason: Some("building a full plan from a vague description".to_string()),
+            })
+            .await
+            .expect("escalate_to_reasoning call should succeed");
+
+        assert_eq!(result, "Switching to the reasoning model to work through this.");
+        let calls = host.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "escalate_to_reasoning");
+        let parsed: serde_json::Value = serde_json::from_str(&calls[0].1).unwrap();
+        assert_eq!(parsed["reason"], "building a full plan from a vague description");
+    }
+
+    #[tokio::test]
+    async fn escalate_to_reasoning_omits_reason_when_absent() {
+        let host = Arc::new(RecordingHost::new("ok"));
+        let tool = EscalateToReasoningTool::new(host.clone());
+
+        tool.call(EscalateToReasoningArgs { reason: None })
+            .await
+            .expect("escalate_to_reasoning call should succeed");
+
+        let calls = host.calls.lock().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&calls[0].1).unwrap();
+        assert!(parsed.get("reason").is_none());
+    }
+
+    #[test]
+    fn escalate_to_reasoning_args_deserialize_from_empty_object() {
+        let args: EscalateToReasoningArgs =
+            serde_json::from_str("{}").expect("escalate_to_reasoning args are all-optional");
+        assert!(args.reason.is_none());
     }
 }

@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SwiftData
 
 /// Current sync activity, for a (future) Settings/status UI and the debug affordance in
 /// `HistoryView` today.
@@ -76,10 +77,57 @@ final class SyncManager {
             // singleton, since `SyncManager` itself has no live `WorkoutSession`/transcript to attach
             // one to. See `CoachController.reviewExternalChanges` and `CoachReviewStore`.
             CoachController.shared.reviewExternalChanges(changes)
+            // domain-primitives.md §11: the coach-review turn above is READ-only (a note about what
+            // it saw) — it does not itself reconcile SwiftData. Route the same changed files through
+            // `CanonicalImporter` so an externally-edited canonical file (one carrying the hidden
+            // `<!-- workout.md:canonical -->` block) actually reconstructs its `PlanRecord`/
+            // `WorkoutRecord`, instead of leaving the store permanently divergent from what's synced.
+            // A hand-edited file with no canonical block is a no-op here (counted, not erred on) —
+            // the coach's review note above is still the right (and only) response to that case.
+            self?.ingestCanonicalChanges(changes.map { (path: $0.path, content: $0.content) })
         }
         self.icloud.onExternalChanges = { [weak self] changes in
             self?.onICloudExternalChanges?(changes)
+            self?.ingestCanonicalChanges(changes.map { (path: $0.path, content: $0.content) })
         }
+    }
+
+    // MARK: - Canonical ingest (domain-primitives.md §11)
+
+    /// Opens a fresh `ModelContext` against the app's single shared `ModelContainer` (see
+    /// `WorkoutMDApp.sharedModelContainer`) and runs `CanonicalImporter` over `files`. Safe to call
+    /// with an empty array (no-ops) or with files that carry no canonical block (`CanonicalImporter`
+    /// counts and skips those rather than erroring). This is the ONGOING ingest path, fed by each
+    /// `pull()`'s diff of what changed since last sync — see `restoreFromSync(context:)` below for
+    /// the separate FULL-listing path a fresh install/second device needs.
+    private func ingestCanonicalChanges(_ files: [(path: String, content: String)]) {
+        guard !files.isEmpty else { return }
+        let context = ModelContext(WorkoutMDApp.sharedModelContainer)
+        _ = CanonicalImporter(context: context).restoreFromSync(files: files)
+    }
+
+    /// Full reconstruction for a fresh install / second device (domain-primitives.md §11): fetches
+    /// EVERY canonical Markdown file from every enabled sync source — not just what changed since
+    /// last sync, which is what `pull()`'s diff-based `onExternalChanges` above ingests — and routes
+    /// all of it through `CanonicalImporter`. Every import is itself idempotent (plans upsert-by-id
+    /// as a new revision; sessions are append-only skip-if-exists — see `CanonicalImporter`), so
+    /// calling this more than once (e.g. the Settings "Restore from sync" action, retried) is safe.
+    /// The caller supplies `context` (typically `\.modelContext` from the SwiftUI environment) rather
+    /// than this reaching for `WorkoutMDApp.sharedModelContainer` itself, so a caller that already has
+    /// a context in scope (like a Settings view) reconciles into the exact same context instance the
+    /// UI is observing.
+    @discardableResult
+    func restoreFromSync(context: ModelContext) async -> CanonicalImporter.RestoreSummary {
+        var files: [(path: String, content: String)] = []
+
+        if AppSettings.shared.icloudSyncEnabled, let icloudFiles = try? await icloud.fetchAllMarkdownFiles() {
+            files.append(contentsOf: icloudFiles)
+        }
+        if isAuthenticated, let githubFiles = try? await sync.fetchAllMarkdownFiles() {
+            files.append(contentsOf: githubFiles)
+        }
+
+        return CanonicalImporter(context: context).restoreFromSync(files: files)
     }
 
     // MARK: - App lifecycle hooks
@@ -134,6 +182,32 @@ final class SyncManager {
             // Likely offline or transient — queue it so the next pull/foreground retries it rather
             // than losing the session's write.
             sync.enqueueRetry(markdown: markdown, path: path, message: message)
+            return false
+        }
+    }
+
+    // MARK: - Plan commit (plan.md carries the active PlanSnapshot + canonical block)
+
+    /// Renders `snapshot` (typically `PlanRepository.activeSnapshot()`) via the snapshot-aware
+    /// `MarkdownGenerator.renderPlan(_:)` — human body plus the hidden canonical block
+    /// (domain-primitives.md §11) — and writes it to every enabled sync target as `plan.md`, mirroring
+    /// `commitSession`'s shape (independent iCloud/GitHub writes, GitHub failures queue for retry).
+    /// Called wherever a plan is actually written (`AppCoachHost.planApply`, today) rather than on a
+    /// timer, so `plan.md` is never more than one coach turn stale.
+    @discardableResult
+    func commitPlan(_ snapshot: PlanSnapshot) async -> Bool {
+        let markdown = MarkdownGenerator.renderPlan(snapshot)
+
+        if AppSettings.shared.icloudSyncEnabled {
+            _ = try? await icloud.writePlan(markdown: markdown)
+        }
+
+        guard isAuthenticated else { return false }
+        do {
+            _ = try await sync.commitSession(markdown: markdown, path: "plan.md", message: "Update plan.md")
+            return true
+        } catch {
+            sync.enqueueRetry(markdown: markdown, path: "plan.md", message: "Update plan.md")
             return false
         }
     }

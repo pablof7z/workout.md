@@ -20,8 +20,8 @@ struct CoachConversationView: View {
     var placeholder: String = "Tell me about your training…"
     var readyLabel: String = "You're set — Enter"
     var skipLabel: String = "Continue without a plan"
-    var onActivePlan: () -> Void
     var proposalOnly: Bool = false
+    var onActivePlan: () -> Void
     /// `nil` hides the skip affordance entirely — not every surface this view is embedded in has a
     /// meaningful "skip" outcome (e.g. a sheet whose only exit is Cancel in the toolbar).
     var onSkip: (() -> Void)?
@@ -120,6 +120,7 @@ struct CoachConversationView: View {
                     }
                     if let proposal = planProposal {
                         PlanProposalPreview(snapshot: proposal)
+                            .id("plan-proposal")
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -135,6 +136,10 @@ struct CoachConversationView: View {
                 if let last = messages.last {
                     scroll.scrollTo(last.id, anchor: .bottom)
                 }
+            }
+            .onChange(of: planProposal) { _, proposal in
+                guard proposal != nil else { return }
+                withAnimation(.easeOut) { scroll.scrollTo("plan-proposal", anchor: .bottom) }
             }
         }
     }
@@ -188,7 +193,11 @@ struct CoachConversationView: View {
         if proposalOnly {
             guard let planProposal else { return }
             do {
-                _ = try PlanRepository(context: modelContext).acceptProposal(planProposal)
+                let repository = PlanRepository(context: modelContext)
+                let accepted = try repository.acceptProposal(planProposal)
+                if let snapshot = repository.snapshot(of: accepted.id) {
+                    Task { await SyncManager.shared.commitPlan(snapshot) }
+                }
             } catch {
                 acceptanceError = error.localizedDescription
                 Haptics.impact(.medium)
@@ -397,38 +406,8 @@ private struct PlanProposalPreview: View {
                 }
             }
 
-            ForEach(Array(snapshot.sessions.enumerated()), id: \.element.id) { index, session in
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Text(session.name)
-                            .font(.headline)
-                        Spacer()
-                        Text("\(session.blocks.count) block\(session.blocks.count == 1 ? "" : "s")")
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.5))
-                    }
-
-                    ForEach(session.blocks) { block in
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(block.label)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.white.opacity(0.9))
-                            ForEach(block.exercises) { exercise in
-                                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                    Text(exercise.name)
-                                        .font(.subheadline)
-                                    Spacer(minLength: 12)
-                                    Text(setSummary(exercise.sets))
-                                        .font(.caption.monospacedDigit())
-                                        .foregroundStyle(.white.opacity(0.55))
-                                        .multilineTextAlignment(.trailing)
-                                }
-                            }
-                        }
-                    }
-                }
-                .padding(14)
-                .background(.white.opacity(index == 0 ? 0.10 : 0.07), in: RoundedRectangle(cornerRadius: 16))
+            ForEach(Array(snapshot.sessions.enumerated()), id: \.element.id) { item in
+                ProposalSessionCard(session: item.element, isFirst: item.offset == 0)
             }
 
             Text("Ask for changes below. Nothing is saved until you tap Use This Plan.")
@@ -440,11 +419,68 @@ private struct PlanProposalPreview: View {
         .accessibilityElement(children: .contain)
     }
 
-    private func setSummary(_ sets: [SetSnapshot]) -> String {
-        guard let first = sets.first else { return "No sets" }
-        let count = sets.count
+}
+
+private struct ProposalSessionCard: View {
+    let session: SessionSnapshot
+    let isFirst: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(session.name).font(.headline)
+                Spacer()
+                Text(blockCountLabel)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+            ForEach(session.blocks, id: \.id) { block in
+                ProposalBlockRow(block: block)
+            }
+        }
+        .padding(14)
+        .background(.white.opacity(isFirst ? 0.10 : 0.07), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var blockCountLabel: String {
+        "\(session.blocks.count) block\(session.blocks.count == 1 ? "" : "s")"
+    }
+}
+
+private struct ProposalBlockRow: View {
+    let block: BlockSnapshot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(block.label)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.9))
+            ForEach(block.exercises, id: \.id) { exercise in
+                ProposalExerciseRow(exercise: exercise)
+            }
+        }
+    }
+}
+
+private struct ProposalExerciseRow: View {
+    let exercise: ExerciseSnapshot
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(exercise.name).font(.subheadline)
+            Spacer(minLength: 12)
+            Text(summary)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.white.opacity(0.55))
+                .multilineTextAlignment(.trailing)
+        }
+    }
+
+    private var summary: String {
+        guard let first = exercise.sets.first else { return "No sets" }
+        let count = exercise.sets.count
         if let seconds = first.seconds, let min = first.targetMinKg, let max = first.targetMaxKg {
-            return "\(count) × \(seconds)s · \(kg(min))–\(kg(max)) kg"
+            return "\(count) × \(seconds)s · \(kilograms(min))–\(kilograms(max)) kg"
         }
         if let seconds = first.seconds { return "\(count) × \(seconds)s" }
         if let reps = first.reps, let weight = first.weight {
@@ -454,7 +490,7 @@ private struct PlanProposalPreview: View {
         return "\(count) set\(count == 1 ? "" : "s")"
     }
 
-    private func kg(_ value: Double) -> String {
+    private func kilograms(_ value: Double) -> String {
         value.rounded() == value ? String(Int(value)) : String(format: "%.1f", value)
     }
 }

@@ -83,8 +83,20 @@ struct PlanEditorView: View {
         }
     }
 
+    /// Adds a block into the plan's resolved session, creating one first if this plan has none yet
+    /// (e.g. a not-yet-backfilled legacy plan opened before `PlanMigrator.backfill` ran).
     private func addBlock() {
-        let block = PlanBlockRecord(order: plan.blocks.count, kind: .straight, label: "New Exercise")
+        let session: PlanSessionRecord
+        if let resolved = plan.resolvedSession {
+            session = resolved
+        } else {
+            let created = PlanSessionRecord(order: 0, name: "Workout")
+            created.plan = plan
+            plan.sessions.append(created)
+            plan.nextSessionID = created.id
+            session = created
+        }
+        let block = PlanBlockRecord(order: plan.blocks(in: session).count, kind: .straight, label: "New Exercise", sessionID: session.id)
         let exercise = PlanExerciseRecord(order: 0, name: "New Exercise", cue: "")
         exercise.sets = [PlanSetRecord(order: 0, reps: 10, weight: nil)]
         block.exercises = [exercise]
@@ -241,7 +253,14 @@ struct ExerciseEditorView: View {
 
     private func addSet() {
         let last = exercise.orderedSets.last
-        exercise.sets.append(PlanSetRecord(order: exercise.sets.count, reps: last?.reps ?? 10, weight: last?.weight, seconds: last?.seconds))
+        exercise.sets.append(PlanSetRecord(
+            order: exercise.sets.count,
+            reps: last?.reps ?? 10,
+            weight: last?.weight,
+            seconds: last?.seconds,
+            targetMinKg: last?.targetMinKg,
+            targetMaxKg: last?.targetMaxKg
+        ))
         try? modelContext.save()
     }
 
@@ -257,47 +276,94 @@ struct ExerciseEditorView: View {
     }
 }
 
-/// One editable prescribed set: reps/weight, or a timed hold — mutually exclusive, matching
-/// `SetTarget`'s two cases.
+/// One editable prescribed set: reps/weight, a plain timed hold, or a Tindeq force-corridor hold.
 private struct SetRowEditor: View {
     @Bindable var set: PlanSetRecord
     var onChange: () -> Void
 
-    @State private var isTimed: Bool
+    private enum TargetKind: String, CaseIterable, Identifiable {
+        case reps = "Reps"
+        case timed = "Timed"
+        case tindeq = "Tindeq"
+
+        var id: Self { self }
+    }
+
+    @State private var targetKind: TargetKind
 
     init(set: PlanSetRecord, onChange: @escaping () -> Void) {
         self.set = set
         self.onChange = onChange
-        _isTimed = State(initialValue: set.seconds != nil)
+        _targetKind = State(initialValue: {
+            if set.targetMinKg != nil, set.targetMaxKg != nil { return .tindeq }
+            return set.seconds == nil ? .reps : .timed
+        }())
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Picker("Type", selection: $isTimed) {
-                Text("Reps").tag(false)
-                Text("Timed").tag(true)
+            Picker("Type", selection: $targetKind) {
+                ForEach(TargetKind.allCases) { kind in
+                    Text(kind.rawValue).tag(kind)
+                }
             }
             .pickerStyle(.segmented)
-            .onChange(of: isTimed) { _, timed in
-                if timed {
+            .onChange(of: targetKind) { _, kind in
+                switch kind {
+                case .reps:
+                    set.seconds = nil
+                    set.targetMinKg = nil
+                    set.targetMaxKg = nil
+                    if set.reps == nil { set.reps = 10 }
+                case .timed:
                     set.reps = nil
                     set.weight = nil
+                    set.targetMinKg = nil
+                    set.targetMaxKg = nil
                     if set.seconds == nil { set.seconds = 30 }
-                } else {
-                    set.seconds = nil
-                    if set.reps == nil { set.reps = 10 }
+                case .tindeq:
+                    set.reps = nil
+                    set.weight = nil
+                    if set.seconds == nil { set.seconds = 7 }
+                    if set.targetMinKg == nil { set.targetMinKg = 30 }
+                    if set.targetMaxKg == nil { set.targetMaxKg = 34 }
                 }
                 onChange()
             }
 
-            if isTimed {
+            if targetKind == .timed || targetKind == .tindeq {
                 Stepper(
                     "Seconds: \(set.seconds ?? 30)",
                     value: Binding(get: { set.seconds ?? 30 }, set: { set.seconds = $0; onChange() }),
-                    in: 5...600,
-                    step: 5
+                    in: 1...600,
+                    step: targetKind == .tindeq ? 1 : 5
                 )
-            } else {
+            }
+
+            if targetKind == .tindeq {
+                Stepper(
+                    "Target minimum: \(kilograms(set.targetMinKg ?? 30)) kg",
+                    value: Binding(
+                        get: { set.targetMinKg ?? 30 },
+                        set: {
+                            set.targetMinKg = min($0, set.targetMaxKg ?? $0)
+                            onChange()
+                        }),
+                    in: 0...500,
+                    step: 0.5
+                )
+                Stepper(
+                    "Target maximum: \(kilograms(set.targetMaxKg ?? 34)) kg",
+                    value: Binding(
+                        get: { set.targetMaxKg ?? 34 },
+                        set: {
+                            set.targetMaxKg = max($0, set.targetMinKg ?? $0)
+                            onChange()
+                        }),
+                    in: 0...500,
+                    step: 0.5
+                )
+            } else if targetKind == .reps {
                 Stepper(
                     "Reps: \(set.reps ?? 0)",
                     value: Binding(get: { set.reps ?? 0 }, set: { set.reps = $0; onChange() }),
@@ -317,5 +383,9 @@ private struct SetRowEditor: View {
     private var weightLabel: String {
         guard let weight = set.weight, weight > 0 else { return "bodyweight" }
         return "\(Int(weight)) lb"
+    }
+
+    private func kilograms(_ value: Double) -> String {
+        value.rounded() == value ? String(Int(value)) : String(format: "%.1f", value)
     }
 }

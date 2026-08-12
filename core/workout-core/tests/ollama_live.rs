@@ -156,10 +156,11 @@ fn a_tool_call_is_routed_through_the_real_coach_host() {
         let (sink_tx, sink_rx) = mpsc::channel();
         let (host_tx, host_rx) = mpsc::channel();
         engine.send_message(
-            "You are a strength coach. The athlete just asked for a weight change. You MUST \
-             call the adjust_set tool to apply it — never respond with prose instead."
+            "You are a strength coach. The athlete just asked you to update their training \
+             plan. You MUST call the plan_apply tool with at least one operation to apply the \
+             change — never respond with prose instead."
                 .to_string(),
-            "Bump my Back Squat, set index 0, to 100kg.".to_string(),
+            "Set my active plan's goal to \"Get stronger at squat\".".to_string(),
             "[]".to_string(),
             Box::new(ChannelSink(sink_tx)),
             Box::new(RecordingHost(host_tx)),
@@ -170,7 +171,7 @@ fn a_tool_call_is_routed_through_the_real_coach_host() {
             match sink_rx.recv_timeout(Duration::from_secs(45)) {
                 Ok(Event::TextDelta) => {}
                 Ok(Event::ToolCall(name, _args)) => {
-                    assert_eq!(name, "adjust_set");
+                    assert_eq!(name, "plan_apply");
                     saw_tool_call = true;
                 }
                 Ok(Event::Completed(_)) => break,
@@ -183,28 +184,22 @@ fn a_tool_call_is_routed_through_the_real_coach_host() {
             routed = host_rx.recv_timeout(Duration::from_secs(1)).ok();
             break;
         }
-        eprintln!("attempt {attempt}/3: model did not call adjust_set for this prompt, retrying");
+        eprintln!("attempt {attempt}/3: model did not call plan_apply for this prompt, retrying");
     }
 
     let (routed_name, routed_args) = routed.expect(
-        "expected the model to call adjust_set for a weight-change request within 3 attempts",
+        "expected the model to call plan_apply for a plan-change request within 3 attempts",
     );
-    assert_eq!(routed_name, "adjust_set");
+    assert_eq!(routed_name, "plan_apply");
     let parsed: serde_json::Value =
         serde_json::from_str(&routed_args).expect("tool args should be valid JSON");
-    // Only assert on the shape rig/our tool guarantees (both fields are
-    // `required` in the tool's JSON schema — see `AdjustSetArgs`), not on
-    // the model's exact wording or whether it included the optional
-    // `new_weight`/`new_reps` fields this particular run. Model instruction
-    // *fidelity* is not what this test is verifying — the always-run unit
-    // tests in `src/coach/tools.rs` cover exact argument routing
+    // Only assert on the shape the tool's JSON schema guarantees — `operations` is the one
+    // `required` field (see `PlanApplyArgs`) — not on the model's exact wording or how many/which
+    // operations it chose to include. Model instruction *fidelity* is not what this test is
+    // verifying — the always-run unit tests in `src/coach/tools.rs` cover exact argument routing
     // deterministically via a fake host.
     assert!(
-        parsed["exercise"].as_str().is_some_and(|s| !s.is_empty()),
-        "expected a non-empty exercise name, got {parsed}"
-    );
-    assert!(
-        parsed["set_index"].is_number(),
-        "expected a numeric set_index, got {parsed}"
+        parsed["operations"].is_array(),
+        "expected an operations array, got {parsed}"
     );
 }
