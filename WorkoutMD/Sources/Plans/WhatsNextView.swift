@@ -22,13 +22,19 @@ struct WhatsNextView: View {
 
     @State private var isGenerating = false
     @State private var errorMessage: String?
-    @State private var proposedPlan: PlanRecord?
+    /// The coach's final reply text once `converse(mode: .today, ...)` completes — `plan_apply`
+    /// (if the model called it) has already applied to the active plan by the time `onComplete`
+    /// fires (`AppCoachHost.applyTool` runs synchronously before the turn's text finishes
+    /// streaming), so this is shown as confirmation alongside a "Start This Session" button rather
+    /// than a separate proposal object the way the deleted `generatePlan`/`ProposedPlan` pipeline
+    /// used to hand back.
+    @State private var coachReply: String?
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 20) {
-                if let proposedPlan {
-                    proposalPreview(proposedPlan)
+                if let coachReply {
+                    replyPreview(coachReply)
                 } else if isGenerating {
                     Spacer()
                     ProgressView("Repairing your plan…")
@@ -89,36 +95,44 @@ struct WhatsNextView: View {
     }
 
     @ViewBuilder
-    private func proposalPreview(_ plan: PlanRecord) -> some View {
+    private func replyPreview(_ reply: String) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                Text(plan.name).font(.title2.weight(.bold))
-                Text(plan.summary).font(.subheadline).foregroundStyle(.secondary)
+                if let plan = activePlans.first {
+                    Text(plan.name).font(.title2.weight(.bold))
+                    Text(plan.summary).font(.subheadline).foregroundStyle(.secondary)
 
-                ForEach(plan.orderedBlocks) { block in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(block.label).font(.headline)
-                        ForEach(block.orderedExercises) { exercise in
-                            Text("• \(exercise.name) — \(exercise.orderedSets.count) set\(exercise.orderedSets.count == 1 ? "" : "s")")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
+                    ForEach(plan.orderedBlocks) { block in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(block.label).font(.headline)
+                            ForEach(block.orderedExercises) { exercise in
+                                Text("• \(exercise.name) — \(exercise.orderedSets.count) set\(exercise.orderedSets.count == 1 ? "" : "s")")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }
+
+                Text(reply)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
 
         Button {
+            guard let plan = activePlans.first else { return }
             onPlanReady(plan)
         } label: {
             Text("Start This Session")
                 .frame(maxWidth: .infinity)
         }
         .buttonStyle(.borderedProminent)
+        .disabled(activePlans.first == nil)
 
         Button(role: .destructive) {
-            self.proposedPlan = nil
+            coachReply = nil
         } label: {
             Text("Discard")
                 .frame(maxWidth: .infinity)
@@ -136,19 +150,29 @@ struct WhatsNextView: View {
         return "Last session: \(last.name), \(days) days ago. No guilt, no catch-up — let's repair forward with the next useful session."
     }
 
+    /// Routes the repair-forward request through the general conversation path (domain-primitives.md
+    /// invariants 1/2: `plan_apply`, never a bespoke generation pipeline) instead of the deleted
+    /// `CoachController.generatePlan`/`ProposedPlan`. `mode: .today` gets `CoachContextAssembler` to
+    /// fold in recent history/goals the same way `.planning` does for a fresh plan.
     private func generate() {
         isGenerating = true
         errorMessage = nil
+        coachReply = nil
         let prompt = Self.repairPrompt(sessions: sessions, activePlan: activePlans.first, settings: appSettings)
-        coachController.generatePlan(goalPrompt: prompt, sessionLengthMinutes: appSettings.sessionLengthMinutes) { result in
-            isGenerating = false
-            switch result {
-            case .success(let plan):
-                proposedPlan = plan
-            case .failure(let error):
-                errorMessage = error.userMessage
+        coachController.converse(
+            mode: .today,
+            userText: prompt,
+            modelContext: modelContext,
+            onDelta: { _ in },
+            onComplete: { text in
+                isGenerating = false
+                coachReply = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Plan updated." : text
+            },
+            onError: { message in
+                isGenerating = false
+                errorMessage = message
             }
-        }
+        )
     }
 
     /// Coach-independent fallback: duplicates the active (or most recent) plan under a "repeat"
@@ -163,11 +187,12 @@ struct WhatsNextView: View {
         onPlanReady(repaired)
     }
 
-    /// Builds the repair-forward prompt: goal, target length, current plan, and — when there's a
-    /// gap — an explicit instruction to repair forward without guilt/streak language.
+    /// Builds the repair-forward prompt: current plan, and — when there's a gap — an explicit
+    /// instruction to repair forward without guilt/streak language. The athlete's stated goal is
+    /// never passed in here — it already rides in via the coach memory digest that `converse`
+    /// assembles on every turn (`CoachContextAssembler`).
     static func repairPrompt(sessions: [WorkoutRecord], activePlan: PlanRecord?, settings: AppSettings) -> String {
         var lines: [String] = []
-        lines.append("Athlete's stated goal: \(settings.primaryGoal).")
         if let activePlan {
             lines.append("Current plan: \(activePlan.name) — \(activePlan.summary).")
         }

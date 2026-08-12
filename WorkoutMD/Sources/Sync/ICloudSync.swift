@@ -251,6 +251,36 @@ final class ICloudSync {
         return changed
     }
 
+    // MARK: - Full restore listing (fresh install / second device)
+
+    /// Fetches the CURRENT content of every canonical Markdown file in the ubiquity container —
+    /// `plan.md` and everything under `sessions/` — regardless of the local change-detection hash
+    /// index `pull()` maintains. `pull()` reports a DIFF since the last known hash per file (and, on
+    /// this instance's very first call ever, reports nothing at all while it establishes that
+    /// baseline — see the type doc comment); that's right for "what changed that the coach should
+    /// look at", but wrong for RESTORE, where a fresh install has no prior baseline and needs
+    /// everything that exists right now. `README.md` is deliberately excluded — per
+    /// domain-primitives.md §11 it's export-only, never a restore source.
+    func fetchAllMarkdownFiles() async throws -> [(path: String, content: String)] {
+        guard let documentsURL = await resolvedDocumentsURL() else {
+            throw ICloudSyncError.unavailable
+        }
+        try fileManager.createDirectory(at: documentsURL, withIntermediateDirectories: true)
+
+        let fileURLs = try coordinatedContentsOfDirectory(at: documentsURL)
+            .filter { $0.pathExtension == "md" }
+
+        var results: [(path: String, content: String)] = []
+        for url in fileURLs {
+            let relativePath = relativePath(for: url, in: documentsURL)
+            guard relativePath != "README.md" else { continue }
+            try? fileManager.startDownloadingUbiquitousItem(at: url)
+            guard let content = try? coordinatedRead(at: url) else { continue }
+            results.append((relativePath, content))
+        }
+        return results
+    }
+
     // MARK: - Live observation (NSMetadataQuery)
 
     /// Starts watching the ubiquity container for changes made elsewhere (another device, or an edit

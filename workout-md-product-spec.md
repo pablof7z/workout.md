@@ -1,8 +1,16 @@
 # Workout.md Product Spec
 
-Version: 0.1  
+Version: 0.2
 Status: Draft  
 Scope: High-level product specification only. This document intentionally avoids architecture, implementation design, and screen-level design.
+
+> **v0.2 settled decisions.** Several previously-open questions are now settled and
+> implemented. In summary (details in §19): coach-generated plan changes **apply by
+> default**, with optional unapplied **proposals** when iterating; plans are **versioned
+> and recoverable**; the coach has **general durable memory**; the agent acts through a
+> small set of **general plan/memory/session primitives** (not narrow per-task tools);
+> **onboarding is a coach conversation**, not an intro-slide gate; and **voice input is
+> part of v1**. Where earlier sections below still read as open, §19 governs.
 
 ## 1. Product Summary
 
@@ -385,12 +393,14 @@ The AI may suggest or generate changes to:
 - exercise substitutions;
 - recovery adjustments.
 
-Default authority:
+Default authority (settled, v0.2):
 
-- completed workout data is factual and user-controlled;
-- today’s remaining workout can receive suggested adjustments;
-- future plans can be modified by the coach within user-defined rules;
-- the user should be able to override any plan decision.
+- completed workout data is factual and user-controlled — the coach never rewrites logged history;
+- coach-generated plan changes **apply immediately by default** (no manual activation step);
+- every applied change is **versioned and recoverable** — the user can inspect and restore an earlier plan version, and restoring is itself a normal versioned change;
+- when the coach or user is explicitly weighing alternatives, the same mechanism can produce an **unapplied proposal** to preview before applying — a proposal is a candidate change to the same plan, not a separate system;
+- today’s remaining workout can receive live adjustments;
+- the user can override or restore past any plan decision.
 
 ## 7. Tracking Requirements
 
@@ -621,7 +631,17 @@ The ideal posture:
 
 ## 12. Voice Requirements
 
-Voice should be useful but not central to the product identity.
+Voice input is **part of v1** and first-class in onboarding, general coaching, and active
+workouts. It is an input method that feeds the same text the keyboard feeds — the coach
+receives text regardless of how it was captured, so voice never changes the coach's domain
+model.
+
+The product provides a transcription-provider abstraction: an Apple-native, on-device path
+(the default where supported) and an optional ElevenLabs cloud path, with provider choice and
+credentials in Settings. Recording shows visible state, supports long recordings and partial
+transcripts where available, and always yields an **editable final transcript** the user
+confirms before it is submitted to the coach. Voice remains optional — the product still works
+excellently without it.
 
 Potential voice uses:
 
@@ -686,6 +706,11 @@ The strongest anti-feature:
 - Recent workout history used by planning.
 - Support for strength and hypertrophy tracking.
 - No social, streak, or gamified pressure.
+- Coach-generated plan changes apply by default; versioned, recoverable plans.
+- General durable coach memory (freeform coaching facts, not fixed categories).
+- Conversational onboarding that produces a usable active plan.
+- Voice input in onboarding, coaching, and active workouts (Apple-native default; ElevenLabs optional).
+- Durable in-progress workouts that survive termination, with resume/discard on relaunch.
 
 ### Should have
 
@@ -700,7 +725,6 @@ The strongest anti-feature:
 
 ### Could have later
 
-- Voice capture.
 - Spoken summaries.
 - More advanced training-method presets.
 - Deeper long-term trend analysis.
@@ -725,13 +749,19 @@ The product is successful if:
 
 ## 17. Open Product Decisions
 
-These decisions remain worth validating:
+Settled (v0.2):
 
-1. How much can the coach automatically change in future plans without explicit user approval?
+1. **How much can the coach automatically change in future plans without explicit approval?**
+   — Settled: plan changes **apply by default** and are **versioned/recoverable**; the same
+   mechanism offers an **optional unapplied proposal** when explicitly iterating. Completed
+   history is never altered.
+5. **Should voice be included in V1?** — Settled: **yes**, voice input is part of v1 (see §12, §19).
+
+Still worth validating:
+
 2. How aggressive should in-session adjustment be by default?
 3. How much structure should be required for non-lifting workouts?
 4. How prominent should uploaded training doctrine be in the initial product?
-5. Should voice be included in V1 or treated as a later enhancement?
 6. How much analytics is enough before the app starts feeling like a dashboard product?
 
 ## 18. Current Positioning Options
@@ -751,3 +781,81 @@ These decisions remain worth validating:
 ### Option D
 
 > Workout.md helps you track what actually happened, adapt what comes next, and keep your training data yours.
+
+## 19. Settled Product/Behavior Decisions (v0.2)
+
+These are settled and implemented. They govern where earlier sections still read as open.
+
+### 19.1 One canonical plan mechanism
+
+There is one representation of a plan and one way to change it. Creating a plan, importing a
+routine, building one collaboratively, editing a future workout, replacing an exercise during a
+session, and restoring an earlier version are all the same mechanism: **composable structured
+operations over stable identifiers**, applied to a plan (creating a plan is applying operations
+to an empty plan). Related operations apply **atomically** (all-or-nothing). There are no
+special-purpose plan tools (no separate "create onboarding plan", "swap exercise", "import
+routine", "change schedule").
+
+### 19.2 Apply by default, propose when useful
+
+Coach-generated plan changes **apply immediately by default**. The same mechanism can instead
+produce an **unapplied proposal** when the coach or user is explicitly weighing alternatives — a
+proposal is a candidate change to the same plan model, previewed then applied or discarded, not a
+second planning pipeline. Generated plans no longer wait for manual activation.
+
+### 19.3 Versioned, recoverable plans
+
+Every applied plan change creates recoverable history. The user can inspect and restore an earlier
+version; restoring is itself a normal versioned change. A plan can express **more than one future
+workout**, and the next workout is resolved by a simple cursor over the plan's sessions — **no
+rigid calendar** — so missed sessions repair forward rather than forcing catch-up.
+
+### 19.4 General durable memory
+
+The coach has general primitives to add, update, query, and remove **freeform durable memories** —
+any coaching-relevant fact (goals, equipment, schedule, injuries, preferences, disliked movements,
+progression rules, …) with no mandatory categories. Memory is distinct from the conversation
+transcript, uploaded reference/doctrine documents, the current plan and its revisions, active
+workout state, and completed history. Every coach invocation — onboarding, planning, and live —
+sees the current relevant memories.
+
+### 19.5 A general coach
+
+The coach operates with optional context: onboarding, general planning, Today, an active workout,
+a specific exercise, or history review. It does not require a live workout or an exercise name
+merely to have a conversation. Live-workout context is available when a workout exists but does not
+own the coach.
+
+### 19.6 Conversational onboarding
+
+Onboarding is a coach conversation, not an intro-slide gate. A new user can describe their
+situation, dictate an unstructured account, provide an existing routine, build a plan
+collaboratively, or give minimal information and let the coach choose. The coach records memories
+and normally creates and activates a usable plan directly. Onboarding is complete only when the
+user has a usable active plan or explicitly chooses to continue without one — never merely because
+screens were dismissed. There is no production dependency on a seeded starter plan (a sample plan
+remains available as an explicit option).
+
+### 19.7 Voice-first input
+
+Covered in §12: voice is part of v1, first-class across onboarding/coaching/workouts, via a
+transcription-provider abstraction (Apple-native default, ElevenLabs optional), always yielding an
+editable final transcript. Provider choice never changes the coach's domain model.
+
+### 19.8 Durable active workouts
+
+An in-progress workout is persisted continuously (from the moment it starts, not at the end), so it
+survives termination or a crash; on relaunch the user gets a clear resume-or-discard choice,
+preserving position, completed/skipped sets, actual values, effort, substitutions, and session
+transcript. Prescribed-vs-actual history is tracked by **stable identity**, so structural changes
+during a live workout cannot corrupt the record of what was planned versus what happened.
+
+### 19.9 Honest, recoverable data ownership
+
+Markdown remains the first-class external format and stays clean and human-readable. Alongside the
+human-readable body, plan and completed-session files carry a hidden **canonical block** that is
+the restorable source of truth, so a fresh install or second device can reconstruct plans and
+completed history from the sync source. Index/summary artifacts (e.g. the README) are explicitly
+**export-only**, not restore sources. Completed-workout history is **factual and append-only** — it
+is never destructively overwritten by external edits; external plan changes land as new plan
+revisions.

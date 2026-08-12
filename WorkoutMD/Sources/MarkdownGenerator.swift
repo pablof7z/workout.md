@@ -60,7 +60,11 @@ enum MarkdownGenerator {
             lines.append("")
         }
 
-        return joined(lines)
+        // Hidden, machine-restorable block (domain-primitives.md §11) — invisible in any rendered
+        // Markdown (it's an HTML comment), but what `MarkdownParser.parseSession` decodes to
+        // reconstruct this exact `WorkoutRecord` graph losslessly on restore. The pretty body above
+        // is unaffected either way — this is purely appended after it.
+        return joined(lines) + "\n" + CanonicalMarkdown.block(for: SessionDTO.from(record)) + "\n"
     }
 
     private static func renderExercise(_ exercise: ExerciseRecord) -> [String] {
@@ -131,6 +135,99 @@ enum MarkdownGenerator {
         }
 
         return joined(lines)
+    }
+
+    /// Renders a canonical `PlanSnapshot` to Markdown: the same pretty human shape as
+    /// `renderPlan(name:goal:blocks:)` above (front-matter, headings, prescribed sets per exercise),
+    /// but sourced directly from the value layer (so every session of a multi-session plan is
+    /// rendered, not just the single `[WorkoutBlock]` list a live runner happens to be using) and
+    /// with the hidden canonical block (domain-primitives.md §11) appended so `plan.md` is a
+    /// restorable artifact, not just a readable one. This is the overload the sync path
+    /// (`SyncManager`/`ICloudSync.writePlan`) should render `plan.md` with — see `PlanRepository.
+    /// snapshot(of:)`/`activeSnapshot()` for how to get a `PlanSnapshot` from the active `PlanRecord`.
+    static func renderPlan(_ snapshot: PlanSnapshot) -> String {
+        var lines: [String] = []
+
+        lines.append("---")
+        lines.append("workout: \(snapshot.name)")
+        if let goal = snapshot.goal, !goal.isEmpty {
+            lines.append("goal: \(goal)")
+        }
+        lines.append("---")
+        lines.append("")
+        lines.append("# \(snapshot.name)")
+        if let goal = snapshot.goal, !goal.isEmpty {
+            lines.append("")
+            lines.append("_\(goal)_")
+        }
+        lines.append("")
+
+        for session in snapshot.sessions {
+            lines.append("## \(session.name)")
+            lines.append("")
+            for block in session.blocks {
+                lines.append(contentsOf: renderBlockSnapshot(block))
+            }
+        }
+
+        return joined(lines) + "\n" + CanonicalMarkdown.block(for: snapshot) + "\n"
+    }
+
+    private static func renderBlockSnapshot(_ block: BlockSnapshot) -> [String] {
+        var lines: [String] = []
+
+        switch block.kind {
+        case .straight:
+            lines.append("### \(block.label)")
+            lines.append("")
+            for exercise in block.exercises {
+                for (index, set) in exercise.sets.enumerated() {
+                    lines.append("- Set \(index + 1): \(displayString(for: set)) — \(exercise.cue)")
+                }
+            }
+            lines.append("")
+
+        case .superset, .circuit:
+            let kindLabel = block.kind == .superset ? "Superset" : "Circuit"
+            lines.append("### \(block.label) (\(kindLabel)) — \(block.rounds) rounds")
+            lines.append("")
+            for (index, exercise) in block.exercises.enumerated() {
+                let prefix = letter(for: index).map { "\($0)\(index + 1) " } ?? ""
+                let sets = exercise.sets.map(displayString(for:)).joined(separator: ", ")
+                lines.append("- \(prefix)\(exercise.name): \(sets) — \(exercise.cue)")
+            }
+            if let restSeconds = block.restSeconds {
+                lines.append("- Rest between rounds: \(restSeconds) sec")
+            }
+            lines.append("")
+        }
+
+        return lines
+    }
+
+    private static func displayString(for set: SetSnapshot) -> String {
+        if let seconds = set.seconds, let targetMinKg = set.targetMinKg,
+           let targetMaxKg = set.targetMaxKg {
+            return "\(seconds) sec · \(kilograms(targetMinKg))–\(kilograms(targetMaxKg)) kg Tindeq"
+        }
+        if let seconds = set.seconds {
+            return "\(seconds) sec"
+        }
+        guard let reps = set.reps else { return "—" }
+        if let weight = set.weight {
+            return "\(reps) reps · \(Int(weight)) lb"
+        }
+        return "\(reps) reps"
+    }
+
+    private static func kilograms(_ value: Double) -> String {
+        value.rounded() == value ? String(Int(value)) : String(format: "%.1f", value)
+    }
+
+    private static func letter(for index: Int) -> String? {
+        let letters = ["A", "B", "C", "D", "E", "F", "G", "H"]
+        guard letters.indices.contains(index) else { return nil }
+        return letters[index]
     }
 
     private static func renderBlock(_ block: WorkoutBlock) -> [String] {

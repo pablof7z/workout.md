@@ -40,6 +40,9 @@ enum RecordCoachKind: String, Codable {
 @Model
 final class WorkoutRecord {
     @Attribute(.unique) var id: UUID
+    /// The plan this workout was started from. Nullable so existing history migrates cleanly and
+    /// imported legacy sessions can remain honestly unlinked rather than relying on a name match.
+    var planID: UUID?
     var date: Date
     var name: String
     var goal: String?
@@ -60,6 +63,7 @@ final class WorkoutRecord {
 
     init(
         id: UUID = UUID(),
+        planID: UUID? = nil,
         date: Date = .now,
         name: String,
         goal: String? = nil,
@@ -69,6 +73,7 @@ final class WorkoutRecord {
         isMock: Bool = false
     ) {
         self.id = id
+        self.planID = planID
         self.date = date
         self.name = name
         self.goal = goal
@@ -137,17 +142,27 @@ final class SetRecord {
     var prescribedReps: Int?
     var prescribedWeight: Double?
     var prescribedSeconds: Int?
+    var prescribedTargetMinKg: Double?
+    var prescribedTargetMaxKg: Double?
 
     // Actual (what happened). Nil when skipped.
     var actualReps: Int?
     var actualWeight: Double?
     var actualSeconds: Int?
+    var actualPeakKg: Double?
+    var actualAverageKg: Double?
+    var actualTimeInTargetSeconds: Double?
 
     var rpe: Double?
     var skipped: Bool
     var substituted: Bool
     var substitutedName: String?
     var notes: String?
+    /// The originating `WorkoutStep.id` this set was logged against — added (slice 5,
+    /// domain-primitives.md §8) for traceability once `makeRecord` joins prescribed/actual by
+    /// stable identity instead of positional `zip`. Nullable/additive: existing rows lightweight-
+    /// migrate for free, and `nil` just means "logged before this field existed."
+    var sourceStepID: UUID?
 
     var exercise: ExerciseRecord?
 
@@ -160,14 +175,20 @@ final class SetRecord {
         prescribedReps: Int? = nil,
         prescribedWeight: Double? = nil,
         prescribedSeconds: Int? = nil,
+        prescribedTargetMinKg: Double? = nil,
+        prescribedTargetMaxKg: Double? = nil,
         actualReps: Int? = nil,
         actualWeight: Double? = nil,
         actualSeconds: Int? = nil,
+        actualPeakKg: Double? = nil,
+        actualAverageKg: Double? = nil,
+        actualTimeInTargetSeconds: Double? = nil,
         rpe: Double? = nil,
         skipped: Bool = false,
         substituted: Bool = false,
         substitutedName: String? = nil,
-        notes: String? = nil
+        notes: String? = nil,
+        sourceStepID: UUID? = nil
     ) {
         self.id = id
         self.order = order
@@ -177,14 +198,20 @@ final class SetRecord {
         self.prescribedReps = prescribedReps
         self.prescribedWeight = prescribedWeight
         self.prescribedSeconds = prescribedSeconds
+        self.prescribedTargetMinKg = prescribedTargetMinKg
+        self.prescribedTargetMaxKg = prescribedTargetMaxKg
         self.actualReps = actualReps
         self.actualWeight = actualWeight
         self.actualSeconds = actualSeconds
+        self.actualPeakKg = actualPeakKg
+        self.actualAverageKg = actualAverageKg
+        self.actualTimeInTargetSeconds = actualTimeInTargetSeconds
         self.rpe = rpe
         self.skipped = skipped
         self.substituted = substituted
         self.substitutedName = substitutedName
         self.notes = notes
+        self.sourceStepID = sourceStepID
     }
 
     /// "Set 2" or, inside a group, "R2/3 · Set 1".
@@ -196,6 +223,9 @@ final class SetRecord {
     }
 
     var prescribedDisplay: String {
+        if let prescribedSeconds, let prescribedTargetMinKg, let prescribedTargetMaxKg {
+            return "\(prescribedSeconds) sec · \(kg(prescribedTargetMinKg))–\(kg(prescribedTargetMaxKg)) kg"
+        }
         if let prescribedSeconds {
             return "\(prescribedSeconds) sec"
         }
@@ -208,6 +238,9 @@ final class SetRecord {
 
     var actualDisplay: String {
         if skipped { return "Skipped" }
+        if let actualPeakKg, let actualAverageKg, let actualSeconds {
+            return "\(actualSeconds) sec · peak \(kg(actualPeakKg)) kg · avg \(kg(actualAverageKg)) kg"
+        }
         if let actualSeconds {
             return "\(actualSeconds) sec"
         }
@@ -225,6 +258,10 @@ final class SetRecord {
         if let prescribedReps, let actualReps, prescribedReps != actualReps { return true }
         if let prescribedWeight, let actualWeight, prescribedWeight != actualWeight { return true }
         return false
+    }
+
+    private func kg(_ value: Double) -> String {
+        value.rounded() == value ? String(Int(value)) : String(format: "%.1f", value)
     }
 }
 
@@ -289,9 +326,22 @@ extension WorkoutSession {
     /// edit or reps-stepper nudge); actual values come from the live `steps` as they stand when the
     /// workout finishes. For a timed set with no dedicated "log actual duration" control in this
     /// prototype, a completed (non-skipped) hold is recorded as having run the prescribed duration.
+    ///
+    /// Joins the two by STABLE `WorkoutStep.id` (domain-primitives.md §8), not `zip(prescribedSteps,
+    /// steps)` — a positional pairing that a structural live edit (coach `addSet`/`removeSet`/
+    /// reorder) could silently misalign, corrupting prescribed-vs-actual history for every set after
+    /// the edit. Iterating `steps` (the live/actual array) and looking each one up by id means:
+    /// - a step present in both → prescribed from the frozen snapshot, actual from the live step, as
+    ///   before;
+    /// - a step ADDED live (its id isn't in `prescribedSteps`, e.g. the coach's `addSet`) → no
+    ///   prescribed values (all `prescribed*` fields stay `nil` — an honest "this wasn't planned",
+    ///   not a guess), actual from the live step;
+    /// - a step REMOVED live (its id is in `prescribedSteps` but no longer in `steps`) → simply never
+    ///   visited by this loop, so it isn't emitted — it was never part of the actual session.
     func makeRecord(workoutName: String, goal: String?, date: Date = .now) -> WorkoutRecord {
         let summary = buildSummary()
         let record = WorkoutRecord(
+            planID: activePlan?.id,
             date: date,
             name: workoutName,
             goal: goal,
@@ -305,31 +355,39 @@ extension WorkoutSession {
             let name: String
         }
 
+        let prescribedByID: [WorkoutStep.ID: WorkoutStep] = Dictionary(
+            uniqueKeysWithValues: prescribedSteps.map { ($0.id, $0) }
+        )
+
         var exerciseByKey: [ExerciseKey: ExerciseRecord] = [:]
         var orderedExercises: [ExerciseRecord] = []
         var setOrder = 0
 
-        for (prescribedStep, actualStep) in zip(prescribedSteps, steps) {
-            guard case .set(let prescribedInfo) = prescribedStep.page,
-                  case .set(let actualInfo) = actualStep.page else { continue }
+        for actualStep in steps {
+            guard case .set(let actualInfo) = actualStep.page else { continue }
 
-            let key = ExerciseKey(blockIndex: actualStep.blockIndex, name: prescribedInfo.exercise.name)
+            let prescribedInfo: SetPageInfo? = {
+                guard case .set(let info)? = prescribedByID[actualStep.id]?.page else { return nil }
+                return info
+            }()
+
+            let key = ExerciseKey(blockIndex: actualStep.blockIndex, name: actualInfo.exercise.name)
             let exerciseRecord: ExerciseRecord
             if let existing = exerciseByKey[key] {
                 exerciseRecord = existing
             } else {
                 let groupKind: RecordGroupKind
-                switch prescribedInfo.groupKind {
+                switch prescribedInfo?.groupKind ?? actualInfo.groupKind {
                 case .superset: groupKind = .superset
                 case .circuit: groupKind = .circuit
                 case nil: groupKind = .straight
                 }
                 exerciseRecord = ExerciseRecord(
                     order: orderedExercises.count,
-                    name: prescribedInfo.exercise.name,
+                    name: actualInfo.exercise.name,
                     blockName: actualStep.blockName,
                     groupKind: groupKind,
-                    groupLabel: prescribedInfo.groupLabel
+                    groupLabel: prescribedInfo?.groupLabel ?? actualInfo.groupLabel
                 )
                 exerciseByKey[key] = exerciseRecord
                 orderedExercises.append(exerciseRecord)
@@ -337,20 +395,27 @@ extension WorkoutSession {
 
             let setRecord = SetRecord(
                 order: setOrder,
-                setNumber: prescribedInfo.setNumber,
-                round: prescribedInfo.round,
-                totalRounds: prescribedInfo.totalRounds,
+                setNumber: prescribedInfo?.setNumber ?? actualInfo.setNumber,
+                round: prescribedInfo?.round ?? actualInfo.round,
+                totalRounds: prescribedInfo?.totalRounds ?? actualInfo.totalRounds,
                 rpe: rpe[actualStep.id],
-                skipped: actualInfo.skipped
+                skipped: actualInfo.skipped,
+                sourceStepID: actualStep.id
             )
             setOrder += 1
 
-            switch prescribedInfo.exercise.target {
-            case .reps(let count, let weight):
-                setRecord.prescribedReps = count
-                setRecord.prescribedWeight = weight
-            case .timed(let seconds):
-                setRecord.prescribedSeconds = seconds
+            if let prescribedInfo {
+                switch prescribedInfo.exercise.target {
+                case .reps(let count, let weight):
+                    setRecord.prescribedReps = count
+                    setRecord.prescribedWeight = weight
+                case .timed(let seconds):
+                    setRecord.prescribedSeconds = seconds
+                case .tindeq(let seconds, let targetMinKg, let targetMaxKg):
+                    setRecord.prescribedSeconds = seconds
+                    setRecord.prescribedTargetMinKg = targetMinKg
+                    setRecord.prescribedTargetMaxKg = targetMaxKg
+                }
             }
 
             if !actualInfo.skipped {
@@ -360,6 +425,12 @@ extension WorkoutSession {
                     setRecord.actualWeight = weight
                 case .timed(let seconds):
                     setRecord.actualSeconds = seconds
+                case .tindeq(let seconds, _, _):
+                    let result = tindeqResults[actualStep.id]
+                    setRecord.actualSeconds = Int((result?.holdSeconds ?? Double(seconds)).rounded())
+                    setRecord.actualPeakKg = result?.peakKg
+                    setRecord.actualAverageKg = result?.averageKg
+                    setRecord.actualTimeInTargetSeconds = result?.timeInTargetSeconds
                 }
             }
 

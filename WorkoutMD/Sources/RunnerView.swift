@@ -70,8 +70,17 @@ struct RunnerView: View {
             .ignoresSafeArea()
             .overlay(alignment: .top) {
                 if let current = currentStep {
-                    TopContextStrip(step: current, stepIndex: currentIndex, totalSteps: session.steps.count) {
-                        showingList = true
+                    ZStack {
+                        TopContextStrip(step: current, stepIndex: currentIndex, totalSteps: session.steps.count) {
+                            showingList = true
+                        }
+                        if current.isTindeqSet {
+                            HStack {
+                                Spacer()
+                                TindeqConnectionBadge()
+                            }
+                            .padding(.horizontal, 18)
+                        }
                     }
                     .padding(.top, TopStripMetrics.topOffset)
                 }
@@ -122,6 +131,13 @@ struct RunnerView: View {
     }
 }
 
+extension WorkoutStep {
+    var isTindeqSet: Bool {
+        guard case .set(let info) = page else { return false }
+        return info.exercise.target.isTindeq
+    }
+}
+
 /// Small floating glass pill pinned to the top safe area showing where you are in the whole
 /// session. Tapping it opens the full workout list.
 private struct TopContextStrip: View {
@@ -133,7 +149,7 @@ private struct TopContextStrip: View {
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 8) {
-                Text(step.blockName)
+                Text(title)
                     .font(.caption.weight(.semibold))
                 Text("·")
                     .foregroundStyle(.white.opacity(0.35))
@@ -154,7 +170,40 @@ private struct TopContextStrip: View {
         // minimum touch target; grow the hit area without growing the visible glass shape.
         .frame(minHeight: 44)
         .contentShape(Rectangle())
-        .accessibilityLabel("\(step.blockName), step \(stepIndex + 1) of \(totalSteps)")
+        .accessibilityLabel("\(title), step \(stepIndex + 1) of \(totalSteps)")
         .accessibilityHint("Opens the full workout list")
+    }
+
+    private var title: String {
+        guard case .set(let info) = step.page, info.exercise.target.isTindeq else {
+            return step.blockName
+        }
+        return info.exercise.name
+    }
+}
+
+private struct TindeqConnectionBadge: View {
+    @Environment(TindeqManager.self) private var tindeq
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(indicatorColor)
+                .frame(width: 8, height: 8)
+            Text(tindeq.statusLabel)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+        }
+        .foregroundStyle(.white.opacity(0.9))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Tindeq, \(tindeq.statusLabel)")
+    }
+
+    private var indicatorColor: Color {
+        switch tindeq.state {
+        case .sampling: return .green
+        case .failed, .unavailable: return .orange
+        default: return .white.opacity(0.45)
+        }
     }
 }
