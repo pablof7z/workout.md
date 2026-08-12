@@ -24,6 +24,16 @@ enum MarkdownGenerator {
         if let averageRPE = record.averageRPE {
             lines.append("avg_rpe: \(oneDecimal(averageRPE))")
         }
+        if let sensor = record.heartRateSensorName, !record.heartRateSamples.isEmpty {
+            lines.append("heart_rate_sensor: \(sensor)")
+            lines.append("heart_rate_samples: \(record.heartRateSamples.count)")
+        }
+        if let averageHeartRate = record.averageHeartRate {
+            lines.append("avg_heart_rate_bpm: \(averageHeartRate)")
+        }
+        if let maximumHeartRate = record.maximumHeartRate {
+            lines.append("max_heart_rate_bpm: \(maximumHeartRate)")
+        }
         lines.append("---")
         lines.append("")
         lines.append("# \(record.name)")
@@ -48,7 +58,25 @@ enum MarkdownGenerator {
         }
         let deviations = exercises.flatMap(\.sets).filter(\.isDeviation).count
         lines.append("- Deviations from plan: \(deviations)")
+        if let averageHeartRate = record.averageHeartRate,
+           let minimumHeartRate = record.minimumHeartRate,
+           let maximumHeartRate = record.maximumHeartRate {
+            let sensor = record.heartRateSensorName.map { " · \($0)" } ?? ""
+            lines.append("- Heart rate: avg \(averageHeartRate) bpm · \(minimumHeartRate)–\(maximumHeartRate) bpm\(sensor)")
+        }
         lines.append("")
+
+        let heartRateSamples = record.heartRateSamples.sorted { $0.timestamp < $1.timestamp }
+        if !heartRateSamples.isEmpty {
+            lines.append("## Heart Rate")
+            lines.append("")
+            lines.append("| Time | BPM |")
+            lines.append("|---|---:|")
+            for sample in heartRateSamples {
+                lines.append("| \(heartRateTimeFormatter.string(from: sample.timestamp)) | \(sample.beatsPerMinute) |")
+            }
+            lines.append("")
+        }
 
         let notes = record.coachNotes.sorted { $0.order < $1.order }
         if !notes.isEmpty {
@@ -287,6 +315,12 @@ enum MarkdownGenerator {
     private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter
+    }()
+
+    private static let heartRateTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
         return formatter
     }()
 }

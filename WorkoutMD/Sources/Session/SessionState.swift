@@ -90,6 +90,9 @@ struct SessionState: Codable {
     var rpe: [UUID: Double]
     /// Optional for backward-compatible decoding of active sessions saved before Tindeq support.
     var tindeqResults: [UUID: TindeqSetResult]?
+    /// Optional for backward-compatible decoding of active sessions saved before Polar support.
+    var heartRateSamples: [HeartRateSample]?
+    var heartRateSensorName: String?
     var startedAt: Date
     var activePlanID: UUID?
     /// Reserved for a future `PlanRevisionRecord` reference (domain-primitives.md §8's
@@ -162,6 +165,8 @@ struct SessionState: Codable {
             currentStepID: session.currentStepID,
             rpe: session.rpe,
             tindeqResults: session.tindeqResults,
+            heartRateSamples: session.heartRateSamples,
+            heartRateSensorName: session.heartRateSensorName,
             startedAt: session.startedAt,
             activePlanID: session.activePlan?.id,
             activePlanRevisionID: nil,
@@ -362,6 +367,8 @@ extension WorkoutSession {
             startedAt: state.startedAt,
             rpe: state.rpe,
             tindeqResults: state.tindeqResults ?? [:],
+            heartRateSamples: state.heartRateSamples ?? [],
+            heartRateSensorName: state.heartRateSensorName,
             transcripts: transcripts,
             activePlan: activePlan,
             modelContext: modelContext

@@ -253,6 +253,12 @@ struct SessionSummary {
     }
 }
 
+/// One live reading received from a Polar monitor during the active workout.
+struct HeartRateSample: Codable, Equatable {
+    let timestamp: Date
+    let beatsPerMinute: Int
+}
+
 // MARK: - Shared Observable Session
 
 /// The single source of truth for a live workout. The runner, the effort control, the reps stepper,
@@ -272,6 +278,10 @@ final class WorkoutSession {
     var rpe: [WorkoutStep.ID: Double] = [:]
     /// Measured result per Tindeq-assisted set.
     var tindeqResults: [WorkoutStep.ID: TindeqSetResult] = [:]
+    /// Raw Polar readings captured during this workout. Empty when no monitor was available.
+    var heartRateSamples: [HeartRateSample] = []
+    /// Bluetooth display name of the Polar that supplied `heartRateSamples`.
+    var heartRateSensorName: String?
     /// Coach transcript per exercise name.
     var transcripts: [String: [CoachMessage]] = [:]
     /// Exercises the coach has offered a "Deload 2 weeks" follow-up for.
@@ -332,6 +342,8 @@ final class WorkoutSession {
         startedAt: Date,
         rpe: [WorkoutStep.ID: Double] = [:],
         tindeqResults: [WorkoutStep.ID: TindeqSetResult] = [:],
+        heartRateSamples: [HeartRateSample] = [],
+        heartRateSensorName: String? = nil,
         transcripts: [String: [CoachMessage]] = [:],
         activePlan: PlanRecord? = nil,
         modelContext: ModelContext? = nil
@@ -342,6 +354,8 @@ final class WorkoutSession {
         self.startedAt = startedAt
         self.rpe = rpe
         self.tindeqResults = tindeqResults
+        self.heartRateSamples = heartRateSamples
+        self.heartRateSensorName = heartRateSensorName
         self.transcripts = transcripts
         self.activePlan = activePlan
         self.modelContext = modelContext
@@ -387,6 +401,12 @@ final class WorkoutSession {
 
     func clearTindeqResult(for id: WorkoutStep.ID) {
         tindeqResults.removeValue(forKey: id)
+        onChange?()
+    }
+
+    func recordHeartRate(_ sample: HeartRateSample, sensorName: String) {
+        heartRateSensorName = sensorName
+        heartRateSamples.append(sample)
         onChange?()
     }
 

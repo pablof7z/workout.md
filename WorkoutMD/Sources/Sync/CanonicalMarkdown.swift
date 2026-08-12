@@ -19,9 +19,10 @@ import Foundation
 
 /// The `SessionDTO`-side canonical value type: a lossless, `Codable` mirror of a `WorkoutRecord`
 /// graph (id, date, name, goal, totals, every exercise's every set — prescribed *and* actual — and
-/// the coach transcript), so a completed session round-trips through Markdown without losing any
-/// logged fact. `PlanSnapshot` (`Plans/Canonical/PlanSnapshot.swift`) already plays this role for
-/// plans; this is its session-history counterpart.
+/// the coach transcript, and optional heart-rate samples), so a completed session round-trips
+/// through Markdown without losing any logged fact. `PlanSnapshot`
+/// (`Plans/Canonical/PlanSnapshot.swift`) already plays this role for plans; this is its
+/// session-history counterpart.
 struct SessionDTO: Codable, Equatable {
     var id: UUID
     var planID: UUID? = nil
@@ -31,6 +32,9 @@ struct SessionDTO: Codable, Equatable {
     var totalSets: Int
     var loggedSets: Int
     var averageRPE: Double?
+    /// Optional so canonical session logs written before Polar support still decode.
+    var heartRateSensorName: String? = nil
+    var heartRateSamples: [HeartRateSampleDTO]? = nil
     var isMock: Bool
     var exercises: [ExerciseDTO]
     var coachNotes: [CoachNoteDTO]
@@ -79,6 +83,12 @@ struct SessionDTO: Codable, Equatable {
         var date: Date
         var planID: UUID?
     }
+
+    struct HeartRateSampleDTO: Codable, Equatable {
+        var id: UUID
+        var timestamp: Date
+        var beatsPerMinute: Int
+    }
 }
 
 // MARK: - WorkoutRecord <-> SessionDTO
@@ -96,6 +106,10 @@ extension SessionDTO {
             totalSets: record.totalSets,
             loggedSets: record.loggedSets,
             averageRPE: record.averageRPE,
+            heartRateSensorName: record.heartRateSensorName,
+            heartRateSamples: record.heartRateSamples.sorted { $0.timestamp < $1.timestamp }.map {
+                HeartRateSampleDTO(id: $0.id, timestamp: $0.timestamp, beatsPerMinute: $0.beatsPerMinute)
+            },
             isMock: record.isMock,
             exercises: record.exercises.sorted { $0.order < $1.order }.map { exercise in
                 ExerciseDTO(
@@ -153,8 +167,12 @@ extension SessionDTO {
     func makeRecord() -> WorkoutRecord {
         let record = WorkoutRecord(
             id: id, planID: planID, date: date, name: name, goal: goal,
-            totalSets: totalSets, loggedSets: loggedSets, averageRPE: averageRPE, isMock: isMock
+            totalSets: totalSets, loggedSets: loggedSets, averageRPE: averageRPE,
+            heartRateSensorName: heartRateSensorName, isMock: isMock
         )
+        record.heartRateSamples = (heartRateSamples ?? []).map {
+            HeartRateSampleRecord(id: $0.id, timestamp: $0.timestamp, beatsPerMinute: $0.beatsPerMinute)
+        }
         record.exercises = exercises.map { exerciseDTO in
             let exerciseRecord = ExerciseRecord(
                 id: exerciseDTO.id, order: exerciseDTO.order, name: exerciseDTO.name,
