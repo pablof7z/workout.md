@@ -34,7 +34,7 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Workout.md uses the microphone so you can dictate notes and talk to your coach.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Workout.md connects to your Tindeq to measure force during hangboard sets.</string>
+	<string>Workout.md connects to nearby Polar heart rate monitors and Tindeq sensors during your workout.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Workout.md transcribes your speech on-device so you can dictate instead of type.</string>
 	<key>UILaunchStoryboardName</key>

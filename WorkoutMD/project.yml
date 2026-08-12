@@ -27,7 +27,7 @@ targets:
               - workoutmd
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSMicrophoneUsageDescription: "Workout.md uses the microphone so you can dictate notes and talk to your coach."
-        NSBluetoothAlwaysUsageDescription: "Workout.md connects to your Tindeq to measure force during hangboard sets."
+        NSBluetoothAlwaysUsageDescription: "Workout.md connects to nearby Polar heart rate monitors and Tindeq sensors during your workout."
         NSSpeechRecognitionUsageDescription: "Workout.md transcribes your speech on-device so you can dictate instead of type."
         UILaunchStoryboardName: LaunchScreen
         UISupportedInterfaceOrientations:

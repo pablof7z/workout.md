@@ -15,6 +15,7 @@ struct WorkoutMDApp: App {
             ExerciseRecord.self,
             SetRecord.self,
             CoachNoteRecord.self,
+            HeartRateSampleRecord.self,
             PlanRecord.self,
             PlanBlockRecord.self,
             PlanExerciseRecord.self,
@@ -101,6 +102,7 @@ private struct RootView: View {
     /// screen, and Settings all share the exact same `CoachController`/`CoachEngine` instance.
     @State private var appSettings = AppSettings.shared
     @State private var coachController = CoachController()
+    @State private var heartRateMonitor = PolarHeartRateMonitor()
     /// Same singleton `CoachController` reaches for by default (`fabric: FabricController = .shared`)
     /// so both share the one live `NostrCoach` instance/subscription.
     @State private var fabricController = FabricController.shared
@@ -158,7 +160,7 @@ private struct RootView: View {
         case .today:
             TodayView(onStart: { plan in startSession(with: plan) })
         case .runner:
-            SessionView { summary in
+            SessionView(heartRateMonitor: heartRateMonitor) { summary in
                 saveToHistory()
                 withAnimation(.easeInOut) { screen = .done(summary) }
             }
@@ -177,8 +179,10 @@ private struct RootView: View {
     /// mutation gets persisted too.
     private func startSession(with plan: PlanRecord?) {
         guard let plan else { return }
-        session = WorkoutSession(steps: plan.toWorkoutSteps(), activePlan: plan, modelContext: modelContext)
+        let newSession = WorkoutSession(steps: plan.toWorkoutSteps(), activePlan: plan, modelContext: modelContext)
+        session = newSession
         wireSessionPersistence()
+        startHeartRateCapture(for: newSession)
         ActiveSessionStore(context: modelContext).save(session)
         withAnimation(.easeInOut) { screen = .runner }
     }
@@ -190,6 +194,7 @@ private struct RootView: View {
     /// toggle is off). Marks the durable `ActiveSessionRecord` finished last, so the resume prompt
     /// never reappears for a workout that just completed normally.
     private func saveToHistory() {
+        heartRateMonitor.stop()
         let record = session.makeRecord(workoutName: session.activePlan?.name ?? "Workout", goal: session.activePlan?.goal)
         modelContext.insert(record)
         try? modelContext.save()
@@ -211,6 +216,13 @@ private struct RootView: View {
         session.onChange = { [session] in
             scheduleSave(for: session)
         }
+    }
+
+    private func startHeartRateCapture(for session: WorkoutSession) {
+        heartRateMonitor.onHeartRate = { [weak session] sample, sensorName in
+            session?.recordHeartRate(sample, sensorName: sensorName)
+        }
+        heartRateMonitor.start()
     }
 
     /// Coalesces bursts of mutations (e.g. dragging the reps/weight stepper, or a streaming coach
@@ -246,6 +258,7 @@ private struct RootView: View {
         }
         session = restored
         wireSessionPersistence()
+        startHeartRateCapture(for: restored)
         pendingResume = nil
         screen = .runner
     }

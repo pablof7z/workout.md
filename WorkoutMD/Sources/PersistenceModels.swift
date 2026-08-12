@@ -50,6 +50,7 @@ final class WorkoutRecord {
     var totalSets: Int
     var loggedSets: Int
     var averageRPE: Double?
+    var heartRateSensorName: String?
 
     /// True for the couple of seed sessions shown on first run so History isn't empty. Never set by
     /// a real completed workout.
@@ -61,6 +62,9 @@ final class WorkoutRecord {
     @Relationship(deleteRule: .cascade, inverse: \CoachNoteRecord.workout)
     var coachNotes: [CoachNoteRecord] = []
 
+    @Relationship(deleteRule: .cascade, inverse: \HeartRateSampleRecord.workout)
+    var heartRateSamples: [HeartRateSampleRecord] = []
+
     init(
         id: UUID = UUID(),
         planID: UUID? = nil,
@@ -70,6 +74,7 @@ final class WorkoutRecord {
         totalSets: Int = 0,
         loggedSets: Int = 0,
         averageRPE: Double? = nil,
+        heartRateSensorName: String? = nil,
         isMock: Bool = false
     ) {
         self.id = id
@@ -80,6 +85,7 @@ final class WorkoutRecord {
         self.totalSets = totalSets
         self.loggedSets = loggedSets
         self.averageRPE = averageRPE
+        self.heartRateSensorName = heartRateSensorName
         self.isMock = isMock
     }
 
@@ -90,6 +96,35 @@ final class WorkoutRecord {
             parts.append("avg RPE \(MarkdownGenerator.oneDecimal(averageRPE))")
         }
         return parts.joined(separator: " · ")
+    }
+
+    var averageHeartRate: Int? {
+        guard !heartRateSamples.isEmpty else { return nil }
+        let total = heartRateSamples.reduce(0) { $0 + $1.beatsPerMinute }
+        return Int((Double(total) / Double(heartRateSamples.count)).rounded())
+    }
+
+    var minimumHeartRate: Int? {
+        heartRateSamples.map(\.beatsPerMinute).min()
+    }
+
+    var maximumHeartRate: Int? {
+        heartRateSamples.map(\.beatsPerMinute).max()
+    }
+}
+
+/// One timestamped Polar heart-rate reading persisted with its completed workout.
+@Model
+final class HeartRateSampleRecord {
+    var id: UUID
+    var timestamp: Date
+    var beatsPerMinute: Int
+    var workout: WorkoutRecord?
+
+    init(id: UUID = UUID(), timestamp: Date, beatsPerMinute: Int) {
+        self.id = id
+        self.timestamp = timestamp
+        self.beatsPerMinute = beatsPerMinute
     }
 }
 
@@ -347,8 +382,13 @@ extension WorkoutSession {
             goal: goal,
             totalSets: summary.totalSets,
             loggedSets: summary.loggedSets,
-            averageRPE: summary.averageRPE
+            averageRPE: summary.averageRPE,
+            heartRateSensorName: heartRateSensorName
         )
+
+        record.heartRateSamples = heartRateSamples.map {
+            HeartRateSampleRecord(timestamp: $0.timestamp, beatsPerMinute: $0.beatsPerMinute)
+        }
 
         struct ExerciseKey: Hashable {
             let blockIndex: Int

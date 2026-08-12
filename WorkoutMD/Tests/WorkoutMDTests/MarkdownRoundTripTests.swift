@@ -19,6 +19,7 @@ final class MarkdownRoundTripTests: XCTestCase {
             ExerciseRecord.self,
             SetRecord.self,
             CoachNoteRecord.self,
+            HeartRateSampleRecord.self,
             PlanRecord.self,
             PlanBlockRecord.self,
             PlanExerciseRecord.self,
@@ -114,6 +115,11 @@ final class MarkdownRoundTripTests: XCTestCase {
                 exerciseName: "Bench Press", date: fixtureDate(60), planID: UUID()
             )
         ]
+        record.heartRateSensorName = "Polar H10 12345678"
+        record.heartRateSamples = [
+            HeartRateSampleRecord(id: UUID(), timestamp: fixtureDate(10), beatsPerMinute: 121),
+            HeartRateSampleRecord(id: UUID(), timestamp: fixtureDate(11), beatsPerMinute: 149)
+        ]
         return record
     }
 
@@ -167,6 +173,22 @@ final class MarkdownRoundTripTests: XCTestCase {
         XCTAssertEqual(reconstructedSets[1].substitutedName, "Machine Press")
         XCTAssertEqual(reconstructedSets[1].notes, "Shoulder felt tight")
         XCTAssertEqual(reconstructed.coachNotes.first?.text, "Good work, watch that shoulder.")
+        XCTAssertEqual(reconstructed.heartRateSensorName, "Polar H10 12345678")
+        XCTAssertEqual(reconstructed.heartRateSamples.map(\.beatsPerMinute).sorted(), [121, 149])
+    }
+
+    func testPrePolarCanonicalSessionStillDecodes() throws {
+        let dto = SessionDTO.from(makeWorkoutRecord())
+        let encoded = try CanonicalMarkdown.encoder.encode(dto)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object.removeValue(forKey: "heartRateSensorName")
+        object.removeValue(forKey: "heartRateSamples")
+
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+        let decoded = try CanonicalMarkdown.decoder.decode(SessionDTO.self, from: legacyData)
+
+        XCTAssertNil(decoded.heartRateSensorName)
+        XCTAssertNil(decoded.heartRateSamples)
     }
 
     // MARK: - 3. Importer conflict policy

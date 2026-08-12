@@ -40,6 +40,7 @@ struct RunnerView: View {
     }
 
     @Environment(WorkoutSession.self) private var session
+    let heartRateMonitor: PolarHeartRateMonitor
     var onFinish: (SessionSummary) -> Void
 
     @State private var showingList = false
@@ -71,7 +72,12 @@ struct RunnerView: View {
             .overlay(alignment: .top) {
                 if let current = currentStep {
                     ZStack {
-                        TopContextStrip(step: current, stepIndex: currentIndex, totalSteps: session.steps.count) {
+                        TopContextStrip(
+                            step: current,
+                            stepIndex: currentIndex,
+                            totalSteps: session.steps.count,
+                            heartRateBPM: heartRateMonitor.currentBPM
+                        ) {
                             showingList = true
                         }
                         if current.isTindeqSet {
@@ -144,6 +150,7 @@ private struct TopContextStrip: View {
     let step: WorkoutStep
     let stepIndex: Int
     let totalSteps: Int
+    let heartRateBPM: Int?
     var onTap: () -> Void
 
     var body: some View {
@@ -156,6 +163,15 @@ private struct TopContextStrip: View {
                 Text("\(stepIndex + 1)/\(totalSteps)")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.white.opacity(0.6))
+                if let heartRateBPM {
+                    Text("·")
+                        .foregroundStyle(.white.opacity(0.35))
+                    Image(systemName: "heart.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                    Text("\(heartRateBPM)")
+                        .font(.caption.monospacedDigit().weight(.semibold))
+                }
                 Image(systemName: "list.bullet")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.white.opacity(0.6))
@@ -170,7 +186,7 @@ private struct TopContextStrip: View {
         // minimum touch target; grow the hit area without growing the visible glass shape.
         .frame(minHeight: 44)
         .contentShape(Rectangle())
-        .accessibilityLabel("\(title), step \(stepIndex + 1) of \(totalSteps)")
+        .accessibilityLabel(accessibilityLabel)
         .accessibilityHint("Opens the full workout list")
     }
 
@@ -179,6 +195,12 @@ private struct TopContextStrip: View {
             return step.blockName
         }
         return info.exercise.name
+    }
+
+    private var accessibilityLabel: String {
+        let position = "\(title), step \(stepIndex + 1) of \(totalSteps)"
+        guard let heartRateBPM else { return position }
+        return "\(position), heart rate \(heartRateBPM) beats per minute"
     }
 }
 

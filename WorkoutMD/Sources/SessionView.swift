@@ -9,6 +9,7 @@ import SwiftUI
 /// `.highPriorityGesture` so dragging the knob wins over the page swipe.
 struct SessionView: View {
     @Environment(WorkoutSession.self) private var session
+    let heartRateMonitor: PolarHeartRateMonitor
     var onFinish: (SessionSummary) -> Void
 
     /// 0 = Coach (left), 1 = Runner (right). Default to the runner.
@@ -21,7 +22,7 @@ struct SessionView: View {
             })
             .tag(0)
 
-            RunnerView(onFinish: onFinish)
+            RunnerView(heartRateMonitor: heartRateMonitor, onFinish: onFinish)
                 .tag(1)
         }
         .tabViewStyle(.page(indexDisplayMode: .never))

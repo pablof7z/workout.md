@@ -87,6 +87,11 @@ struct HistoryDetailView: View {
                 if let averageRPE = record.averageRPE {
                     LabeledContent("Avg RPE", value: MarkdownGenerator.oneDecimal(averageRPE))
                 }
+                if let averageHeartRate = record.averageHeartRate,
+                   let minimumHeartRate = record.minimumHeartRate,
+                   let maximumHeartRate = record.maximumHeartRate {
+                    LabeledContent("Heart rate", value: "Avg \(averageHeartRate) · \(minimumHeartRate)–\(maximumHeartRate) bpm")
+                }
             }
 
             ForEach(record.exercises.sorted(by: { $0.order < $1.order })) { exercise in

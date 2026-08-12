@@ -18,6 +18,7 @@ final class ActiveSessionTests: XCTestCase {
             ExerciseRecord.self,
             SetRecord.self,
             CoachNoteRecord.self,
+            HeartRateSampleRecord.self,
             PlanRecord.self,
             PlanBlockRecord.self,
             PlanExerciseRecord.self,
@@ -55,6 +56,10 @@ final class ActiveSessionTests: XCTestCase {
         session.setState(.done, for: firstID)
         session.adjustReps(forStepID: firstID, delta: 2)
         session.setEffort(8.5, for: firstID)
+        session.recordHeartRate(
+            HeartRateSample(timestamp: Date(timeIntervalSince1970: 1_700_000_000), beatsPerMinute: 142),
+            sensorName: "Polar H10 12345678"
+        )
         session.skip(forStepID: secondID)
         session.currentStepID = secondID
 
@@ -65,6 +70,8 @@ final class ActiveSessionTests: XCTestCase {
         XCTAssertEqual(restored.steps.map(\.id), session.steps.map(\.id), "step ids preserved, in order")
         XCTAssertEqual(restored.currentStepID, secondID)
         XCTAssertEqual(restored.rpe[firstID], 8.5)
+        XCTAssertEqual(restored.heartRateSamples, session.heartRateSamples)
+        XCTAssertEqual(restored.heartRateSensorName, "Polar H10 12345678")
         XCTAssertEqual(restored.activePlan?.id, session.activePlan?.id)
 
         guard case .set(let firstInfo) = restored.steps[0].page, case .set(let liveFirstInfo) = session.steps[0].page else {
