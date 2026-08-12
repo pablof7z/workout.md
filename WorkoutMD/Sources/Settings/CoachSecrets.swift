@@ -17,6 +17,7 @@ enum CoachSecrets {
         case ollamaAPIKey = "ollama-api-key"
         case openRouterBYOKMetadata = "openrouter-byok-metadata"
         case ollamaBYOKMetadata = "ollama-byok-metadata"
+        case elevenLabsAPIKey = "elevenlabs-api-key"
     }
 
     static func openRouterAPIKey() throws -> String? { try readString(.openRouterAPIKey) }
@@ -39,10 +40,21 @@ enum CoachSecrets {
     }
     static func clearOllamaAPIKey() throws { try clearProvider(.ollama) }
 
+    /// The ElevenLabs Speech-to-Text API key (`ElevenLabsTranscriber`, domain-primitives.md §10) —
+    /// same Keychain service, a distinct account, entirely independent of the coach provider keys
+    /// above: choosing ElevenLabs for transcription never touches `providerKind`/OpenRouter/Ollama.
+    static func elevenLabsAPIKey() throws -> String? { try readString(.elevenLabsAPIKey) }
+    static func setElevenLabsAPIKey(_ value: String) throws { try write(value, account: .elevenLabsAPIKey) }
+    static func clearElevenLabsAPIKey() throws { try delete(.elevenLabsAPIKey) }
+    static func hasElevenLabsAPIKey() -> Bool {
+        (((try? elevenLabsAPIKey()) ?? nil)?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+    }
+
     /// Reads whichever credential matches `provider` — the one `CoachController` needs when it
     /// (re)configures the engine.
     static func apiKey(for provider: CoachProviderKind) throws -> String? {
-        try readString(keyAccount(for: provider))
+        guard provider != .appleIntelligence else { return nil }
+        return try readString(keyAccount(for: provider))
     }
 
     static func hasAPIKey(for provider: CoachProviderKind) -> Bool {
@@ -50,6 +62,7 @@ enum CoachSecrets {
     }
 
     static func byokConnection(for provider: CoachProviderKind) -> CoachProviderConnection? {
+        guard provider.supportsBYOK else { return nil }
         guard let data = try? readData(metadataAccount(for: provider)) else { return nil }
         return try? JSONDecoder().decode(CoachProviderConnection.self, from: data)
     }
@@ -69,6 +82,7 @@ enum CoachSecrets {
     }
 
     static func clearProvider(_ provider: CoachProviderKind) throws {
+        guard provider.supportsBYOK else { return }
         try delete(keyAccount(for: provider))
         try delete(metadataAccount(for: provider))
     }
@@ -134,6 +148,7 @@ enum CoachSecrets {
         switch provider {
         case .openRouter: return .openRouterAPIKey
         case .ollama: return .ollamaAPIKey
+        case .appleIntelligence: preconditionFailure("Apple Intelligence has no Keychain credential")
         }
     }
 
@@ -141,6 +156,7 @@ enum CoachSecrets {
         switch provider {
         case .openRouter: return .openRouterBYOKMetadata
         case .ollama: return .ollamaBYOKMetadata
+        case .appleIntelligence: preconditionFailure("Apple Intelligence has no BYOK metadata")
         }
     }
 }

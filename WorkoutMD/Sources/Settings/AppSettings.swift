@@ -1,11 +1,12 @@
 import Foundation
 import Observation
 
-/// Which LLM provider the coach engine talks to. Mirrors `ProviderConfig`'s two cases, minus the
-/// credentials (those live in the Keychain via `CoachSecrets`, never here).
+/// Which LLM provider the coach talks to. OpenRouter/Ollama use the Rust engine; Apple Intelligence
+/// uses Foundation Models directly in Swift and needs neither credentials nor a model id.
 enum CoachProviderKind: String, Codable, CaseIterable, Identifiable {
     case openRouter
     case ollama
+    case appleIntelligence
 
     var id: String { rawValue }
 
@@ -13,14 +14,46 @@ enum CoachProviderKind: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .openRouter: return "OpenRouter"
         case .ollama: return "Ollama"
+        case .appleIntelligence: return "Apple Intelligence"
         }
     }
 
-    /// Shown as a `TextField` placeholder so the free-text model field isn't a blank mystery.
+    /// Shown as a `TextField` placeholder so the free-text model field isn't a blank mystery. Format
+    /// hints only — never a real model id, and never written into `AppSettings` as a default (see
+    /// `ModelSelectorView`/`ConnectCoachView.fetchFirstModelID`, which fetch a real default instead).
     var modelPlaceholder: String {
         switch self {
-        case .openRouter: return "anthropic/claude-3.5-sonnet"
-        case .ollama: return "llama3.1"
+        case .openRouter: return "provider/model"
+        case .ollama: return "model-name"
+        case .appleIntelligence: return "On-device system model"
+        }
+    }
+
+    var supportsBYOK: Bool { self != .appleIntelligence }
+    var usesModelPicker: Bool { self != .appleIntelligence }
+}
+
+/// Which speech-to-text engine `VoiceInputController` builds (domain-primitives.md §10). Mirrors
+/// `CoachProviderKind`'s shape, but is entirely independent of it — voice transcription is an input
+/// method feeding the same text fields the keyboard feeds, never something the coach domain model
+/// sees a provider tag for.
+enum TranscriptionProviderKind: String, Codable, CaseIterable, Identifiable {
+    case apple
+    case elevenLabs
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .apple: return "Apple (on-device)"
+        case .elevenLabs: return "ElevenLabs (cloud)"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .apple: return "Free, on-device, works offline. Live partial transcript while you talk."
+        case .elevenLabs: return "Cloud transcription. Requires an ElevenLabs API key; no live partials."
         }
     }
 }
@@ -58,32 +91,33 @@ enum CoachVerbosity: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-/// Distinct AI roles that can use different model choices while sharing the same provider and
-/// credential boundary. The Rust engine already accepts a model each time it is configured, so this is
-/// a Swift settings/runtime concern rather than a new UniFFI contract.
-enum CoachModelRole: String, Codable, CaseIterable, Identifiable {
-    case liveCoach
-    case planGeneration
-    case externalReview
+/// The two capability tiers the coach model picker exposes. Replaces the old three per-task-role
+/// models (`liveCoach`/`planGeneration`/`externalReview`) — those were never really different jobs,
+/// just the same coach calling the same general tools under different labels. Now there's one
+/// default tier the coach runs on for everything, and a stronger tier the AGENT ITSELF switches to,
+/// mid-conversation, via the `escalate_to_reasoning` tool when a task demands it (building a whole
+/// plan from a vague description, a complex repair) — see `CoachController.converse`'s `forceTier`
+/// re-run. The Rust engine already accepts a model each time it is configured, so this is a Swift
+/// settings/runtime concern rather than a new UniFFI contract.
+enum CoachModelTier: String, Codable, CaseIterable, Identifiable {
+    case fast
+    case reasoning
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
-        case .liveCoach: return "Live Coach"
-        case .planGeneration: return "Plan Generation / Repair"
-        case .externalReview: return "External Change Review"
+        case .fast: return "Fast"
+        case .reasoning: return "Reasoning"
         }
     }
 
     var detail: String {
         switch self {
-        case .liveCoach:
-            return "In-session coaching turns and tool calls."
-        case .planGeneration:
-            return "Plan creation and the What should I do next repair flow."
-        case .externalReview:
-            return "Reviews Markdown changes pulled from external sync targets."
+        case .fast:
+            return "Everyday coaching, quick edits, and chat."
+        case .reasoning:
+            return "Harder tasks like building a plan or a complex repair — the coach switches to this itself when needed."
         }
     }
 }
@@ -106,17 +140,18 @@ final class AppSettings {
     var ollamaBaseURL: String {
         didSet { defaults.set(ollamaBaseURL, forKey: Keys.ollamaBaseURL) }
     }
-    var model: String {
-        didSet { defaults.set(model, forKey: Keys.model) }
+    /// The default tier the coach runs on for everything. No hardcoded default — empty until the
+    /// athlete connects a provider (`ConnectCoachView.finishConnection`) or picks one explicitly in
+    /// Settings (`ModelTierSettingsView`), both via the fetched model picker.
+    var fastModel: String {
+        didSet { defaults.set(fastModel, forKey: Keys.fastModel) }
     }
-    var liveCoachModel: String {
-        didSet { defaults.set(liveCoachModel, forKey: Keys.liveCoachModel) }
-    }
-    var planGenerationModel: String {
-        didSet { defaults.set(planGenerationModel, forKey: Keys.planGenerationModel) }
-    }
-    var externalReviewModel: String {
-        didSet { defaults.set(externalReviewModel, forKey: Keys.externalReviewModel) }
+    /// The stronger tier the coach switches ITSELF to via `escalate_to_reasoning` when a turn demands
+    /// it. Empty means "not configured yet" — `model(for:.reasoning)` falls back to `fastModel` in
+    /// that case, so escalation is always a no-op until the athlete deliberately picks a distinct
+    /// reasoning model.
+    var reasoningModel: String {
+        didSet { defaults.set(reasoningModel, forKey: Keys.reasoningModel) }
     }
     var verbosity: CoachVerbosity {
         didSet { defaults.set(verbosity.rawValue, forKey: Keys.verbosity) }
@@ -124,6 +159,15 @@ final class AppSettings {
     /// Empty means "use `default_coach_system_prompt()` from the Rust core."
     var systemPromptOverride: String {
         didSet { defaults.set(systemPromptOverride, forKey: Keys.systemPromptOverride) }
+    }
+
+    // MARK: Voice
+
+    /// Which `TranscriptionProvider` `VoiceInputController` builds — Apple on-device by default
+    /// (domain-primitives.md §10). The credential (when `elevenLabs`) lives in Keychain via
+    /// `CoachSecrets.elevenLabsAPIKey`, never here.
+    var transcriptionProviderKind: TranscriptionProviderKind {
+        didSet { defaults.set(transcriptionProviderKind.rawValue, forKey: Keys.transcriptionProviderKind) }
     }
 
     // MARK: Sync (GitHub)
@@ -182,22 +226,6 @@ final class AppSettings {
             .filter { !$0.isEmpty }
     }
 
-    // MARK: Goals & preferences
-
-    var primaryGoal: String {
-        didSet { defaults.set(primaryGoal, forKey: Keys.primaryGoal) }
-    }
-    var sessionLengthMinutes: Int {
-        didSet { defaults.set(sessionLengthMinutes, forKey: Keys.sessionLengthMinutes) }
-    }
-    var dislikedExercises: [String] {
-        didSet {
-            if let data = try? JSONEncoder().encode(dislikedExercises) {
-                defaults.set(data, forKey: Keys.dislikedExercises)
-            }
-        }
-    }
-
     // MARK: Onboarding
 
     /// Whether the first-run `OnboardingView` sequence has been shown and dismissed. Set once, on
@@ -218,12 +246,19 @@ final class AppSettings {
     private enum Keys {
         static let providerKind = "coach.providerKind"
         static let ollamaBaseURL = "coach.ollamaBaseURL"
-        static let model = "coach.model"
-        static let liveCoachModel = "coach.model.liveCoach"
-        static let planGenerationModel = "coach.model.planGeneration"
-        static let externalReviewModel = "coach.model.externalReview"
+        /// Legacy single global model key, pre-tiers. Read only as a migration fallback in `init` —
+        /// nothing writes it anymore.
+        static let legacyModel = "coach.model"
+        /// Legacy per-role keys, pre-tiers (`CoachModelRole`). Read only as migration fallbacks in
+        /// `init` — nothing writes them anymore. `externalReview` had no analogue worth migrating
+        /// (external-change review is now just a normal fast-tier turn).
+        static let legacyLiveCoachModel = "coach.model.liveCoach"
+        static let legacyPlanGenerationModel = "coach.model.planGeneration"
+        static let fastModel = "coach.model.fast"
+        static let reasoningModel = "coach.model.reasoning"
         static let verbosity = "coach.verbosity"
         static let systemPromptOverride = "coach.systemPromptOverride"
+        static let transcriptionProviderKind = "voice.transcriptionProviderKind"
         static let githubRepoName = "sync.githubRepoName"
         static let icloudSyncEnabled = "sync.icloudSyncEnabled"
         static let fabricEnabled = "fabric.enabled"
@@ -232,9 +267,6 @@ final class AppSettings {
         static let fabricChannel = "fabric.channel"
         static let fabricDisplayName = "fabric.displayName"
         static let fabricAbout = "fabric.about"
-        static let primaryGoal = "prefs.primaryGoal"
-        static let sessionLengthMinutes = "prefs.sessionLengthMinutes"
-        static let dislikedExercises = "prefs.dislikedExercises"
         static let hasOnboarded = "onboarding.hasOnboarded"
         static let doctrineEnabled = "prefs.doctrineEnabled"
     }
@@ -252,13 +284,23 @@ final class AppSettings {
             let stored = defaults.string(forKey: Keys.ollamaBaseURL) ?? ""
             return stored.isEmpty ? "http://localhost:11434" : stored
         }()
-        let storedModel = defaults.string(forKey: Keys.model) ?? ""
-        model = storedModel
-        liveCoachModel = defaults.string(forKey: Keys.liveCoachModel) ?? storedModel
-        planGenerationModel = defaults.string(forKey: Keys.planGenerationModel) ?? storedModel
-        externalReviewModel = defaults.string(forKey: Keys.externalReviewModel) ?? storedModel
+        // Migration: a fresh `coach.model.fast`/`coach.model.reasoning` value wins if present;
+        // otherwise fall back to the old per-role key, and — for `fastModel` only — all the way back
+        // to the original pre-role single `coach.model` global, so nobody who connected a provider
+        // before this refactor lands back at an empty, unconfigured coach.
+        let legacyGlobalModel = defaults.string(forKey: Keys.legacyModel) ?? ""
+        fastModel = defaults.string(forKey: Keys.fastModel)
+            ?? defaults.string(forKey: Keys.legacyLiveCoachModel)
+            ?? legacyGlobalModel
+        reasoningModel = defaults.string(forKey: Keys.reasoningModel)
+            ?? defaults.string(forKey: Keys.legacyPlanGenerationModel)
+            ?? ""
         verbosity = CoachVerbosity(rawValue: defaults.string(forKey: Keys.verbosity) ?? "") ?? .balanced
         systemPromptOverride = defaults.string(forKey: Keys.systemPromptOverride) ?? ""
+
+        transcriptionProviderKind = TranscriptionProviderKind(
+            rawValue: defaults.string(forKey: Keys.transcriptionProviderKind) ?? ""
+        ) ?? .apple
 
         githubRepoName = {
             let stored = defaults.string(forKey: Keys.githubRepoName) ?? ""
@@ -282,15 +324,6 @@ final class AppSettings {
         }()
         fabricAbout = defaults.string(forKey: Keys.fabricAbout) ?? ""
 
-        primaryGoal = defaults.string(forKey: Keys.primaryGoal) ?? "Hypertrophy"
-        sessionLengthMinutes = (defaults.object(forKey: Keys.sessionLengthMinutes) as? Int) ?? 45
-        if let data = defaults.data(forKey: Keys.dislikedExercises),
-           let decoded = try? JSONDecoder().decode([String].self, from: data) {
-            dislikedExercises = decoded
-        } else {
-            dislikedExercises = []
-        }
-
         hasOnboarded = defaults.bool(forKey: Keys.hasOnboarded)
         doctrineEnabled = (defaults.object(forKey: Keys.doctrineEnabled) as? Bool) ?? true
     }
@@ -304,61 +337,39 @@ final class AppSettings {
         return base + verbosity.promptSuffix
     }
 
-    /// A terse "grounding" block summarizing the athlete's configured goal/session length/dislikes —
-    /// folded into every coach turn's user-message context (see `CoachController.send`) so the claim
-    /// in Settings' Goals & preferences footer ("the coach sees these as grounding") is actually true
-    /// (M4). Empty only if `primaryGoal` is blank and there are no dislikes — `sessionLengthMinutes`
-    /// always has a value, so it's always included once anything else is.
-    var goalsContextSnippet: String {
-        var lines: [String] = []
-        let goal = primaryGoal.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !goal.isEmpty {
-            lines.append("Primary goal: \(goal).")
-        }
-        lines.append("Target session length: \(sessionLengthMinutes) minutes.")
-        if !dislikedExercises.isEmpty {
-            lines.append("Disliked exercises (avoid programming these without asking first): \(dislikedExercises.joined(separator: ", ")).")
-        }
-        guard !lines.isEmpty else { return "" }
-        return (["Athlete goals & preferences:"] + lines).joined(separator: "\n")
-    }
-
     /// Builds the `ProviderConfig` the coach engine needs, given a credential freshly read from the
     /// Keychain (`nil`/empty is passed through as "no key" rather than an empty-string key).
-    func providerConfig(apiKey: String?) -> ProviderConfig {
+    func providerConfig(apiKey: String?) -> ProviderConfig? {
         let key = (apiKey?.isEmpty == false) ? apiKey : nil
         switch providerKind {
         case .openRouter:
             return .openRouter(apiKey: key ?? "", baseUrl: nil)
         case .ollama:
             return .ollama(baseUrl: ollamaBaseURL, apiKey: key)
+        case .appleIntelligence:
+            return nil
         }
     }
 
-    func model(for role: CoachModelRole) -> String {
-        let roleModel: String
-        switch role {
-        case .liveCoach:
-            roleModel = liveCoachModel
-        case .planGeneration:
-            roleModel = planGenerationModel
-        case .externalReview:
-            roleModel = externalReviewModel
+    /// `.fast` is always just `fastModel`, trimmed. `.reasoning` falls back to `fastModel` when no
+    /// distinct reasoning model has been chosen yet — so escalating to it is always safe (never an
+    /// empty model id) even before the athlete has visited Settings → AI → Models → Reasoning.
+    func model(for tier: CoachModelTier) -> String {
+        switch tier {
+        case .fast:
+            return fastModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        case .reasoning:
+            let trimmed = reasoningModel.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? fastModel.trimmingCharacters(in: .whitespacesAndNewlines) : trimmed
         }
-        let trimmed = roleModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty { return trimmed }
-        return model.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    func setModel(_ value: String, for role: CoachModelRole) {
-        switch role {
-        case .liveCoach:
-            liveCoachModel = value
-            model = value
-        case .planGeneration:
-            planGenerationModel = value
-        case .externalReview:
-            externalReviewModel = value
+    func setModel(_ value: String, for tier: CoachModelTier) {
+        switch tier {
+        case .fast:
+            fastModel = value
+        case .reasoning:
+            reasoningModel = value
         }
     }
 }

@@ -11,6 +11,22 @@ struct SettingsView: View {
     @Environment(FabricController.self) private var fabric
     @Environment(\.dismiss) private var dismiss
 
+    /// Whether the coach is actually usable — an OpenRouter key is stored, or Ollama (a deliberate
+    /// local choice) is selected. Mirrors `CoachView`/`CoachConversationView.isCoachConfigured`.
+    /// This is what the Coach row's status badge reflects — NOT the optional tenex-edge fabric
+    /// connection (which is only one of the four things behind that row and lives in its detail).
+    private var coachStatusLabel: String {
+        switch settingsEnv.providerKind {
+        case .openRouter:
+            let key = (try? CoachSecrets.openRouterAPIKey()) ?? nil
+            return (key ?? "").isEmpty ? "Not set up" : "Ready"
+        case .ollama:
+            return "Ready"
+        case .appleIntelligence:
+            return AppleIntelligenceCoachProvider().availability.statusLabel
+        }
+    }
+
     var body: some View {
         @Bindable var settings = settingsEnv
 
@@ -20,7 +36,7 @@ struct SettingsView: View {
                     SettingsNavigationRow(
                         title: "Coach",
                         subtitle: "Profile, prompt, doctrine, tenex-edge",
-                        value: fabric.status.compactLabel,
+                        value: coachStatusLabel,
                         systemImage: "figure.strengthtraining.traditional",
                         destination: CoachSettingsView(settings: settings, coach: coach, fabric: fabric)
                     )
@@ -33,8 +49,8 @@ struct SettingsView: View {
                     )
                     SettingsNavigationRow(
                         title: "Workout",
-                        subtitle: "Training profile, capture, plan repair",
-                        value: settings.primaryGoal,
+                        subtitle: "Capture, deviations, plan repair",
+                        value: "Capture",
                         systemImage: "list.clipboard",
                         destination: WorkoutSettingsView(settings: settings)
                     )
@@ -357,6 +373,7 @@ private struct DoctrineSettingsView: View {
     #if DEBUG
     @State private var reviewStore = CoachReviewStore.shared
     @State private var debugDump: String?
+    @Environment(\.modelContext) private var modelContext
     #endif
 
     var body: some View {
@@ -396,12 +413,12 @@ private struct DoctrineSettingsView: View {
             #if DEBUG
             Section("Debug") {
                 Button {
-                    let goals = settings.goalsContextSnippet
+                    let memory = MemoryStore(context: modelContext).digest()
                     let doctrine = settings.doctrineEnabled ? store.digest() : "(doctrine disabled)"
                     let review = reviewStore.contextSnippet()
                     let dump = """
-                    [goals]
-                    \(goals.isEmpty ? "(empty)" : goals)
+                    [memory]
+                    \(memory.isEmpty ? "(empty)" : memory)
 
                     [doctrine]
                     \(doctrine.isEmpty ? "(empty)" : doctrine)
@@ -446,6 +463,12 @@ private struct DoctrineSettingsView: View {
     }
 }
 
+/// General durable memory (domain-primitives.md §5) is user-visible/editable here: a freeform
+/// list of `MemoryRecord`s — add, inline-edit, swipe-to-delete — backed directly by `@Query` and
+/// `MemoryStore`, so this list IS the coach's memory rather than a separate view of it. Kept
+/// distinct from the transcript-memory policy controls below (`CoachNoteRecord`'s recency window
+/// and which context blocks get folded in) — a different, older concept (domain-primitives.md
+/// §5's "distinct concepts" list).
 private struct CoachMemorySettingsView: View {
     @AppStorage("settings.coach.memory.includeTranscript") private var includeTranscript = true
     @AppStorage("settings.coach.memory.includeReviews") private var includeReviews = true
@@ -453,31 +476,95 @@ private struct CoachMemorySettingsView: View {
     @AppStorage("settings.coach.memory.longTerm") private var longTerm = false
     @AppStorage("settings.coach.memory.recencyDays") private var recencyDays = 60
 
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: \MemoryRecord.updatedAt, order: .reverse) private var memories: [MemoryRecord]
+    @State private var newMemoryText = ""
+
+    private var store: MemoryStore { MemoryStore(context: modelContext) }
+
     var body: some View {
         Form {
             Section {
+                TextField(
+                    "New memory", text: $newMemoryText,
+                    prompt: Text("e.g. Prefers training in the evening"), axis: .vertical
+                )
+                Button {
+                    addMemory()
+                } label: {
+                    Label("Add Memory", systemImage: "plus.circle")
+                }
+                .disabled(newMemoryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            } header: {
+                Text("Add a Memory")
+            } footer: {
+                Text("Freeform durable notes about the athlete — goals, preferences, injuries, anything worth the coach remembering. Folded into every coach turn's context.")
+            }
+
+            Section {
+                if memories.isEmpty {
+                    Text("No memories yet.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(memories) { memory in
+                        VStack(alignment: .leading, spacing: 4) {
+                            TextField("Memory", text: textBinding(for: memory), axis: .vertical)
+                            if !memory.tags.isEmpty {
+                                Text(memory.tags.joined(separator: ", "))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .swipeActions {
+                            Button(role: .destructive) {
+                                store.remove(id: memory.id)
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
+                    }
+                }
+            } header: {
+                Text("Memories")
+            }
+
+            Section {
                 Stepper(value: $recencyDays, in: 7...365, step: 7) {
-                    LabeledContent("Recency window", value: "\(recencyDays) days")
+                    LabeledContent("Transcript recency window", value: "\(recencyDays) days")
                 }
                 Toggle("Coach transcript memory", isOn: $includeTranscript)
                 Toggle("External sync review notes", isOn: $includeReviews)
                 Toggle("Recent tenex-edge messages", isOn: $includeFabric)
                 Toggle("Long-term history", isOn: $longTerm)
             } footer: {
-                Text("The current runtime uses a 60-day exercise-scoped memory window. These settings make the policy visible for the next enforcement pass.")
+                Text("The current runtime uses a 60-day exercise-scoped transcript memory window (separate from the durable memories above). These settings make the policy visible for the next enforcement pass.")
             }
 
             Section {
                 Button(role: .destructive) {
                     // Future: delete CoachNoteRecord rows after confirmation.
                 } label: {
-                    Label("Clear Coach Memory", systemImage: "trash")
+                    Label("Clear Coach Transcript Memory", systemImage: "trash")
                 }
                 .disabled(true)
             }
         }
         .navigationTitle("Memory")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func addMemory() {
+        let trimmed = newMemoryText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        store.add(text: trimmed, source: "user")
+        newMemoryText = ""
+    }
+
+    private func textBinding(for memory: MemoryRecord) -> Binding<String> {
+        Binding(
+            get: { memory.text },
+            set: { store.update(id: memory.id, text: $0) }
+        )
     }
 }
 
@@ -817,15 +904,15 @@ private struct AISettingsView: View {
             Section {
                 SettingsNavigationRow(
                     title: "Providers",
-                    subtitle: "OpenRouter, Ollama, credentials",
+                    subtitle: "Apple Intelligence, OpenRouter, Ollama",
                     value: settings.providerKind.label,
                     systemImage: "key",
                     destination: ProvidersSettingsView(settings: settings, coach: coach)
                 )
                 SettingsNavigationRow(
                     title: "Models",
-                    subtitle: "Per-role model selection",
-                    value: "\(CoachModelRole.allCases.count)",
+                    subtitle: "Fast / Reasoning tier selection",
+                    value: "\(CoachModelTier.allCases.count)",
                     systemImage: "cpu",
                     destination: ModelsSettingsView(settings: settings, coach: coach)
                 )
@@ -850,9 +937,93 @@ private struct AISettingsView: View {
                     systemImage: "chart.bar",
                     destination: AIUsageSettingsView()
                 )
+                SettingsNavigationRow(
+                    title: "Voice",
+                    subtitle: "Dictation provider and transcription key",
+                    value: settings.transcriptionProviderKind.label,
+                    systemImage: "mic",
+                    destination: VoiceSettingsView(settings: settings)
+                )
             }
         }
         .navigationTitle("AI")
+    }
+}
+
+// MARK: - Voice
+
+/// Transcription-provider choice + credentials (domain-primitives.md §10). Deliberately its own
+/// section rather than folded into `ProvidersSettingsView` — the coach-provider keys above pick which
+/// LLM answers a turn; this picks how the athlete's *voice* becomes text before that turn is ever
+/// sent, an entirely independent axis (never touches `providerKind`/`CoachProviderKind`).
+private struct VoiceSettingsView: View {
+    @Bindable var settings: AppSettings
+
+    @State private var elevenLabsKey = ""
+    @State private var keyStatus: String?
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("Provider", selection: $settings.transcriptionProviderKind) {
+                    ForEach(TranscriptionProviderKind.allCases) { kind in
+                        Text(kind.label).tag(kind)
+                    }
+                }
+                .pickerStyle(.segmented)
+                Text(settings.transcriptionProviderKind.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("Dictation")
+            } footer: {
+                Text("Used by the mic button in the coach chat, onboarding, and during workouts. The coach always receives plain text, regardless of which provider transcribed it.")
+            }
+
+            if settings.transcriptionProviderKind == .elevenLabs {
+                Section {
+                    SecureField("API key", text: $elevenLabsKey)
+                        .textContentType(.password)
+                        .onChange(of: elevenLabsKey) { _, newValue in saveKey(newValue) }
+                    HStack {
+                        Text("Status")
+                        Spacer()
+                        Text(CoachSecrets.hasElevenLabsAPIKey() ? "Connected" : "Not connected")
+                            .foregroundStyle(CoachSecrets.hasElevenLabsAPIKey() ? Color.green : Color.secondary)
+                    }
+                    if let keyStatus {
+                        Text(keyStatus)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if CoachSecrets.hasElevenLabsAPIKey() {
+                        Button("Disconnect ElevenLabs", role: .destructive) {
+                            clearKey()
+                        }
+                    }
+                } header: {
+                    Text("ElevenLabs")
+                } footer: {
+                    Text("The API key is stored in Keychain, never in UserDefaults.")
+                }
+            }
+        }
+        .navigationTitle("Voice")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            elevenLabsKey = (try? CoachSecrets.elevenLabsAPIKey()) ?? ""
+        }
+    }
+
+    private func saveKey(_ value: String) {
+        try? CoachSecrets.setElevenLabsAPIKey(value)
+        keyStatus = value.isEmpty ? nil : "Key saved to Keychain."
+    }
+
+    private func clearKey() {
+        try? CoachSecrets.clearElevenLabsAPIKey()
+        elevenLabsKey = ""
+        keyStatus = "Key removed."
     }
 }
 
@@ -886,9 +1057,14 @@ private struct ProvidersSettingsView: View {
                     connection: ollamaConnection,
                     hasStoredKey: CoachSecrets.hasAPIKey(for: .ollama)
                 )
+                ProviderConnectionStatusRow(
+                    provider: .appleIntelligence,
+                    connection: nil,
+                    hasStoredKey: false
+                )
 
                 Button {
-                    Task { await connectWithBYOK(providers: CoachProviderKind.allCases) }
+                    Task { await connectWithBYOK(providers: CoachProviderKind.allCases.filter(\.supportsBYOK)) }
                 } label: {
                     HStack {
                         Label("Connect Providers with BYOK", systemImage: "link.badge.plus")
@@ -920,7 +1096,7 @@ private struct ProvidersSettingsView: View {
                         Text(provider.label).tag(provider)
                     }
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.menu)
                 .onChange(of: settings.providerKind) { _, _ in coach.applySettings() }
             }
 
@@ -1013,6 +1189,20 @@ private struct ProvidersSettingsView: View {
                 } footer: {
                     Text("A real iPhone cannot reach a Mac's localhost. Use a reachable LAN or remote URL for device use.")
                 }
+
+            case .appleIntelligence:
+                let availability = AppleIntelligenceCoachProvider().availability
+                Section {
+                    LabeledContent("Status", value: availability.statusLabel)
+                    Text(availability.message)
+                        .foregroundStyle(.secondary)
+                    Label("No API key or model selection required", systemImage: "lock.shield")
+                        .font(.subheadline)
+                } header: {
+                    Text("Apple Intelligence")
+                } footer: {
+                    Text("Requests run through Apple's Foundation Models framework on this device. Workout context is not sent to OpenRouter or Ollama.")
+                }
             }
         }
         .navigationTitle("Providers")
@@ -1064,6 +1254,8 @@ private struct ProvidersSettingsView: View {
             case .ollama:
                 ollamaKey = ""
                 ollamaConnection = nil
+            case .appleIntelligence:
+                break
             }
             keyStatus = nil
             byokStatus = "\(provider.label) key removed."
@@ -1141,22 +1333,32 @@ private struct ProviderConnectionStatusRow: View {
         switch provider {
         case .openRouter: return "sparkles"
         case .ollama: return "desktopcomputer"
+        case .appleIntelligence: return "apple.intelligence"
         }
     }
 
     private var status: String {
+        if provider == .appleIntelligence {
+            return AppleIntelligenceCoachProvider().availability.statusLabel
+        }
         if connection != nil { return "BYOK" }
         if hasStoredKey { return "Manual" }
         return "Not connected"
     }
 
     private var statusColor: Color {
+        if provider == .appleIntelligence {
+            return AppleIntelligenceCoachProvider().availability.isAvailable ? .green : .secondary
+        }
         if connection != nil { return .green }
         if hasStoredKey { return .secondary }
         return .secondary
     }
 
     private var detail: String {
+        if provider == .appleIntelligence {
+            return AppleIntelligenceCoachProvider().availability.message
+        }
         if let connection {
             return "\(connection.keyLabel) · \(connection.connectedAt.formatted(date: .abbreviated, time: .shortened))"
         }
@@ -1171,31 +1373,48 @@ private struct ModelsSettingsView: View {
 
     var body: some View {
         List {
-            Section {
-                ForEach(CoachModelRole.allCases) { role in
-                    NavigationLink {
-                        ModelRoleSettingsView(settings: settings, coach: coach, role: role)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack {
-                                Text(role.label)
-                                Spacer()
-                                Text(settings.model(for: role).isEmpty ? "Unset" : settings.model(for: role))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                            }
-                            Text(role.detail)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                        }
-                        .padding(.vertical, 3)
-                    }
+            if settings.providerKind == .appleIntelligence {
+                Section {
+                    LabeledContent("Model", value: "On-device system model")
+                    Text("Apple chooses and updates the model with iOS. Fast and Reasoning tiers don't apply to this provider.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } footer: {
+                    Text(AppleIntelligenceCoachProvider().availability.message)
                 }
-            } footer: {
-                Text("Each role falls back to the old single model until you choose a role-specific value.")
+            } else {
+                Section {
+                    ForEach(CoachModelTier.allCases) { tier in
+                        NavigationLink {
+                            ModelTierSettingsView(settings: settings, coach: coach, tier: tier)
+                        } label: {
+                            HStack(spacing: 10) {
+                                if settings.providerKind == .openRouter, !settings.model(for: tier).isEmpty {
+                                    let providerID = settings.model(for: tier).split(separator: "/", maxSplits: 1).first.map(String.init) ?? "openrouter"
+                                    ProviderLogoView(providerID: providerID, providerName: providerID, size: 26)
+                                }
+                                VStack(alignment: .leading, spacing: 3) {
+                                    HStack {
+                                        Text(tier.label)
+                                        Spacer()
+                                        Text(settings.model(for: tier).isEmpty ? "Unset" : settings.model(for: tier))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                    }
+                                    Text(tier.detail)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                }
+                            }
+                            .padding(.vertical, 3)
+                        }
+                    }
+                } footer: {
+                    Text("Fast is what the coach runs on by default. Reasoning falls back to Fast until you choose a distinct model — the coach switches to it itself for harder tasks.")
+                }
             }
         }
         .navigationTitle("Models")
@@ -1203,29 +1422,23 @@ private struct ModelsSettingsView: View {
     }
 }
 
-private struct ModelRoleSettingsView: View {
+/// Both providers now go through the same fetched `ModelSelectorView` — OpenRouter fetches the public
+/// catalog, Ollama fetches the local server's `/api/tags` (see `ModelCatalogSource`). Neither branch
+/// ever shows a hardcoded suggestion list; the custom-id `TextField` is the only manual fallback,
+/// and it's just placeholder text, never a default value.
+private struct ModelTierSettingsView: View {
     @Bindable var settings: AppSettings
     let coach: CoachController
-    let role: CoachModelRole
+    let tier: CoachModelTier
 
     @State private var customModel = ""
+    @State private var showingModelSelector = false
 
-    private var suggestedModels: [String] {
+    private var source: ModelCatalogSource? {
         switch settings.providerKind {
-        case .openRouter:
-            return [
-                "anthropic/claude-sonnet-4",
-                "openai/gpt-4.1",
-                "anthropic/claude-3.5-haiku",
-                "google/gemini-2.5-pro"
-            ]
-        case .ollama:
-            return [
-                "llama3.1",
-                "llama3.1:8b",
-                "qwen2.5-coder:14b",
-                "mistral"
-            ]
+        case .openRouter: return .openRouter
+        case .ollama: return .ollama(baseURL: settings.ollamaBaseURL)
+        case .appleIntelligence: return nil
         }
     }
 
@@ -1233,27 +1446,45 @@ private struct ModelRoleSettingsView: View {
         Form {
             Section {
                 SettingsValueRow(title: "Provider", value: settings.providerKind.label)
-                SettingsValueRow(title: "Current", value: settings.model(for: role).isEmpty ? "Unset" : settings.model(for: role))
+                SettingsValueRow(title: "Current", value: settings.model(for: tier).isEmpty ? "Unset" : settings.model(for: tier))
+            } footer: {
+                Text(tier.detail)
             }
 
-            Section("Suggested Models") {
-                ForEach(suggestedModels, id: \.self) { model in
-                    Button {
-                        settings.setModel(model, for: role)
-                        if role == .liveCoach {
-                            coach.applySettings(role: .liveCoach)
+            Section {
+                Button {
+                    showingModelSelector = true
+                } label: {
+                    HStack(spacing: 12) {
+                        ProviderLogoView(
+                            providerID: currentProviderID,
+                            providerName: currentProviderID
+                        )
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(settings.model(for: tier).isEmpty ? "Choose a model" : settings.model(for: tier))
+                                .font(.subheadline.monospaced())
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Text(settings.providerKind == .openRouter ? "Browse OpenRouter models" : "Browse models installed on this Ollama server")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
-                    } label: {
-                        HStack {
-                            Text(model)
-                            Spacer()
-                            if settings.model(for: role) == model {
-                                Image(systemName: "checkmark")
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
                     }
+                    .padding(.vertical, 2)
                 }
+            } header: {
+                Text("Model")
+            } footer: {
+                Text(
+                    settings.providerKind == .openRouter
+                        ? "Fetches the live OpenRouter catalog — search by name, provider, or price."
+                        : "Fetches installed models from \(settings.ollamaBaseURL)."
+                )
             }
 
             Section {
@@ -1263,9 +1494,9 @@ private struct ModelRoleSettingsView: View {
                 Button("Use Custom Model ID") {
                     let trimmed = customModel.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !trimmed.isEmpty else { return }
-                    settings.setModel(trimmed, for: role)
-                    if role == .liveCoach {
-                        coach.applySettings(role: .liveCoach)
+                    settings.setModel(trimmed, for: tier)
+                    if tier == .fast {
+                        coach.applySettings(tier: .fast)
                     }
                     customModel = ""
                 }
@@ -1274,11 +1505,38 @@ private struct ModelRoleSettingsView: View {
                 Text("Custom")
             }
         }
-        .navigationTitle(role.label)
+        .navigationTitle(tier.label)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            customModel = settings.model(for: role)
+            customModel = settings.model(for: tier)
         }
+        .sheet(isPresented: $showingModelSelector) {
+            if let source {
+                NavigationStack {
+                    ModelSelectorView(
+                        source: source,
+                        selectedModelID: Binding(
+                            get: { settings.model(for: tier) },
+                            set: { newValue in
+                                settings.setModel(newValue, for: tier)
+                                if tier == .fast {
+                                    coach.applySettings(tier: .fast)
+                                }
+                            }
+                        )
+                    )
+                }
+                .presentationDragIndicator(.visible)
+            }
+        }
+    }
+
+    /// Best-effort maker id parsed straight from the current model id ("anthropic/claude-…" →
+    /// "anthropic") for the row's logo — the full catalog lookup only happens once the sheet opens.
+    private var currentProviderID: String {
+        let current = settings.model(for: tier)
+        if settings.providerKind == .appleIntelligence { return "apple" }
+        return current.split(separator: "/", maxSplits: 1).first.map(String.init) ?? "openrouter"
     }
 }
 
@@ -1350,6 +1608,12 @@ private struct AIUsageSettingsView: View {
 
 // MARK: - Workout
 
+/// Deliberately has no "Athlete" section. Goals, schedule, equipment, injuries/constraints, and
+/// exercise preferences are facts the COACH learns and keeps as durable memory — populated by the
+/// onboarding conversation and ongoing chat via `memory_add` — never settings the user fills in
+/// here. See `CoachMemorySettingsView` (Coach → Coach Memory) for the transparent, editable view
+/// of that memory. This screen only covers app-behavior preferences for what happens during a
+/// workout.
 private struct WorkoutSettingsView: View {
     @Bindable var settings: AppSettings
 
@@ -1357,48 +1621,8 @@ private struct WorkoutSettingsView: View {
         List {
             Section {
                 SettingsNavigationRow(
-                    title: "Training Profile",
-                    subtitle: "Goals, horizon, style",
-                    value: settings.primaryGoal,
-                    systemImage: "target",
-                    destination: TrainingProfileSettingsView(settings: settings)
-                )
-                SettingsNavigationRow(
-                    title: "Schedule",
-                    subtitle: "Days, session length, absence tolerance",
-                    value: "\(settings.sessionLengthMinutes) min",
-                    systemImage: "calendar",
-                    destination: ScheduleSettingsView(settings: settings)
-                )
-                SettingsNavigationRow(
-                    title: "Equipment",
-                    subtitle: "Gym/home, units, plates",
-                    value: "lb",
-                    systemImage: "dumbbell",
-                    destination: EquipmentSettingsView()
-                )
-                SettingsNavigationRow(
-                    title: "Constraints",
-                    subtitle: "Injuries, pain, movement limits",
-                    value: "Notes",
-                    systemImage: "cross.case",
-                    destination: ConstraintsSettingsView()
-                )
-                SettingsNavigationRow(
-                    title: "Preferences",
-                    subtitle: "Liked/disliked exercises, strictness",
-                    value: "\(settings.dislikedExercises.count)",
-                    systemImage: "slider.horizontal.3",
-                    destination: PreferencesSettingsView(settings: settings)
-                )
-            } header: {
-                Text("Athlete")
-            }
-
-            Section {
-                SettingsNavigationRow(
                     title: "Capture Defaults",
-                    subtitle: "RPE/RIR, rest timer, haptics",
+                    subtitle: "RPE/RIR, rest timer, haptics, units",
                     value: "RPE",
                     systemImage: "checklist",
                     destination: CaptureDefaultsSettingsView()
@@ -1425,59 +1649,16 @@ private struct WorkoutSettingsView: View {
     }
 }
 
-private struct TrainingProfileSettingsView: View {
-    @Bindable var settings: AppSettings
-    @AppStorage("settings.workout.secondaryGoal") private var secondaryGoal = "Strength maintenance"
-    @AppStorage("settings.workout.trainingHorizon") private var trainingHorizon = "8 weeks"
-    @AppStorage("settings.workout.trainingStyle") private var trainingStyle = "Simple barbell movements"
-
-    var body: some View {
-        Form {
-            Section {
-                TextField("Primary goal", text: $settings.primaryGoal, prompt: Text("Hypertrophy"))
-                TextField("Secondary goal", text: $secondaryGoal)
-                TextField("Training horizon", text: $trainingHorizon)
-                TextField("Preferred training style", text: $trainingStyle)
-            }
-        }
-        .navigationTitle("Training Profile")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-}
-
-private struct ScheduleSettingsView: View {
-    @Bindable var settings: AppSettings
-    @AppStorage("settings.workout.trainingDays") private var trainingDays = "Mon, Wed, Fri"
-    @AppStorage("settings.workout.scheduleFlexibility") private var scheduleFlexibility = "Flexible"
-    @AppStorage("settings.workout.neverCatchUp") private var neverCatchUp = true
-
-    var body: some View {
-        Form {
-            Section {
-                Stepper(value: $settings.sessionLengthMinutes, in: 15...120, step: 5) {
-                    LabeledContent("Session length", value: "\(settings.sessionLengthMinutes) min")
-                }
-                TextField("Training days", text: $trainingDays)
-                Picker("Schedule style", selection: $scheduleFlexibility) {
-                    Text("Flexible").tag("Flexible")
-                    Text("Planned").tag("Planned")
-                    Text("Strict").tag("Strict")
-                }
-                Toggle("Never make me catch up", isOn: $neverCatchUp)
-            }
-        }
-        .navigationTitle("Schedule")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-}
-
-private struct EquipmentSettingsView: View {
+private struct CaptureDefaultsSettingsView: View {
+    @AppStorage("settings.capture.effortScale") private var effortScale = "RPE"
+    @AppStorage("settings.capture.startRestTimer") private var startRestTimer = true
+    @AppStorage("settings.capture.haptics") private var haptics = true
+    @AppStorage("settings.capture.timedCountdown") private var timedCountdown = true
+    @AppStorage("settings.capture.prefillFromPlan") private var prefillFromPlan = true
+    /// Weight-display units are an app-behavior preference (how numbers are shown), not an
+    /// athlete fact, so this lives here rather than in coach memory — unlike the deleted Equipment
+    /// screen's gym/plates fields, which were athlete facts the coach should learn instead.
     @AppStorage("settings.workout.units") private var units = "lb"
-    @AppStorage("settings.workout.equipmentProfile") private var equipmentProfile = "Gym"
-    @AppStorage("settings.workout.plateJump") private var plateJump = "5 lb"
-    @AppStorage("settings.workout.barbell") private var barbell = true
-    @AppStorage("settings.workout.cables") private var cables = true
-    @AppStorage("settings.workout.dumbbells") private var dumbbells = true
 
     var body: some View {
         Form {
@@ -1485,98 +1666,9 @@ private struct EquipmentSettingsView: View {
                 Picker("Units", selection: $units) {
                     Text("lb").tag("lb")
                     Text("kg").tag("kg")
-                    Text("Both").tag("Both")
                 }
                 .pickerStyle(.segmented)
-                TextField("Equipment profile", text: $equipmentProfile)
-                TextField("Smallest plate jump", text: $plateJump)
             }
-            Section("Available") {
-                Toggle("Barbell", isOn: $barbell)
-                Toggle("Cable stack", isOn: $cables)
-                Toggle("Dumbbells", isOn: $dumbbells)
-            }
-        }
-        .navigationTitle("Equipment")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-}
-
-private struct ConstraintsSettingsView: View {
-    @AppStorage("settings.workout.injuries") private var injuries = "Keep weekday leg volume moderate."
-    @AppStorage("settings.workout.movementRestrictions") private var restrictions = "Avoid high-rep overhead pressing."
-
-    var body: some View {
-        Form {
-            Section("Injuries / Pain Patterns") {
-                TextEditor(text: $injuries)
-                    .frame(minHeight: 140)
-            }
-            Section("Movement Restrictions") {
-                TextEditor(text: $restrictions)
-                    .frame(minHeight: 100)
-            }
-        }
-        .navigationTitle("Constraints")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-}
-
-private struct PreferencesSettingsView: View {
-    @Bindable var settings: AppSettings
-    @State private var newDislikedExercise = ""
-    @AppStorage("settings.workout.likedExercises") private var likedExercises = "Bench press, rows, RDLs"
-    @AppStorage("settings.workout.intensityTolerance") private var intensityTolerance = "Medium"
-    @AppStorage("settings.workout.progressionStyle") private var progressionStyle = "Conservative"
-
-    var body: some View {
-        Form {
-            Section("Liked Exercises") {
-                TextField("Liked exercises", text: $likedExercises)
-            }
-            Section("Disliked Exercises") {
-                ForEach(settings.dislikedExercises, id: \.self) { exercise in
-                    Text(exercise)
-                }
-                .onDelete { offsets in settings.dislikedExercises.remove(atOffsets: offsets) }
-                HStack {
-                    TextField("Add a disliked exercise", text: $newDislikedExercise)
-                    Button("Add") {
-                        let trimmed = newDislikedExercise.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !trimmed.isEmpty, !settings.dislikedExercises.contains(trimmed) else { return }
-                        settings.dislikedExercises.append(trimmed)
-                        newDislikedExercise = ""
-                    }
-                    .disabled(newDislikedExercise.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }
-            Section {
-                Picker("Intensity tolerance", selection: $intensityTolerance) {
-                    Text("Low").tag("Low")
-                    Text("Medium").tag("Medium")
-                    Text("High").tag("High")
-                }
-                Picker("Progression style", selection: $progressionStyle) {
-                    Text("Conservative").tag("Conservative")
-                    Text("Linear").tag("Linear")
-                    Text("Aggressive").tag("Aggressive")
-                }
-            }
-        }
-        .navigationTitle("Preferences")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-}
-
-private struct CaptureDefaultsSettingsView: View {
-    @AppStorage("settings.capture.effortScale") private var effortScale = "RPE"
-    @AppStorage("settings.capture.startRestTimer") private var startRestTimer = true
-    @AppStorage("settings.capture.haptics") private var haptics = true
-    @AppStorage("settings.capture.timedCountdown") private var timedCountdown = true
-    @AppStorage("settings.capture.prefillFromPlan") private var prefillFromPlan = true
-
-    var body: some View {
-        Form {
             Section {
                 Picker("Effort scale", selection: $effortScale) {
                     Text("RPE").tag("RPE")
@@ -1647,6 +1739,10 @@ private struct PlanRepairSettingsView: View {
 
 private struct DataSettingsView: View {
     @Bindable var settings: AppSettings
+    @Environment(\.modelContext) private var modelContext
+
+    @State private var isRestoring = false
+    @State private var restoreResult: String?
 
     var body: some View {
         List {
@@ -1715,8 +1811,42 @@ private struct DataSettingsView: View {
             } header: {
                 Text("Ownership")
             }
+
+            Section {
+                Button {
+                    Task { await runRestore() }
+                } label: {
+                    HStack {
+                        Label("Restore from Sync", systemImage: "arrow.triangle.2.circlepath")
+                        Spacer()
+                        if isRestoring { ProgressView() }
+                    }
+                }
+                .disabled(isRestoring)
+
+                if let restoreResult {
+                    Text(restoreResult)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Restore")
+            } footer: {
+                Text("Fetches every plan and session Markdown file from GitHub/iCloud and reconstructs "
+                     + "plans and history on this device — the fresh-install / second-device path "
+                     + "(domain-primitives.md §11). Safe to run more than once: plans land as a new "
+                     + "revision if changed, and completed sessions are never overwritten.")
+            }
         }
         .navigationTitle("Data")
+    }
+
+    private func runRestore() async {
+        isRestoring = true
+        defer { isRestoring = false }
+        let summary = await SyncManager.shared.restoreFromSync(context: modelContext)
+        restoreResult = "Restored \(summary.plansImported) plan(s), \(summary.sessionsImported) session(s) — "
+            + "skipped \(summary.skippedNoCanonicalBlock) file(s) with no canonical data."
     }
 }
 
@@ -2069,13 +2199,18 @@ private struct BackupsSettingsView: View {
 }
 
 private struct DataControlSettingsView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Environment(AppSettings.self) private var settings
+
+    @State private var confirmResetOnboarding = false
+    @State private var confirmClearMemory = false
+
     var body: some View {
         List {
             Section {
-                Button(role: .destructive) {} label: {
+                Button(role: .destructive) { confirmClearMemory = true } label: {
                     Label("Clear Coach Memory", systemImage: "trash")
                 }
-                .disabled(true)
                 Button(role: .destructive) {} label: {
                     Label("Delete Local Workout History", systemImage: "trash")
                 }
@@ -2084,14 +2219,45 @@ private struct DataControlSettingsView: View {
                     Label("Wipe All Credentials", systemImage: "key.slash")
                 }
                 .disabled(true)
-                Button("Reset Onboarding") {}
-                    .disabled(true)
+                Button("Reset Onboarding") { confirmResetOnboarding = true }
             } footer: {
-                Text("Destructive controls require confirmation and exact scope before they are enabled.")
+                Text("Reset Onboarding returns you to the setup flow and clears the coach's memory and active plan so you can start fresh. Your completed workout history is kept.")
             }
         }
         .navigationTitle("Data Control")
         .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog("Reset onboarding?", isPresented: $confirmResetOnboarding, titleVisibility: .visible) {
+            Button("Reset Onboarding", role: .destructive) { resetOnboarding() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Shows the setup flow again and clears the coach's memory and deactivates your active plan so it builds fresh. Completed workout history is kept.")
+        }
+        .confirmationDialog("Clear coach memory?", isPresented: $confirmClearMemory, titleVisibility: .visible) {
+            Button("Clear Memory", role: .destructive) { clearCoachMemory() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Deletes everything the coach has remembered about you. This can't be undone.")
+        }
+    }
+
+    /// Returns the app to a first-run onboarding state: clears durable coach memory, deactivates
+    /// every plan (so onboarding's "you're set" doesn't instantly appear and the coach builds a new
+    /// plan from a fresh conversation), discards any in-progress session, then flips `hasOnboarded`
+    /// off so `RootView` shows `OnboardingView` again. Completed `WorkoutRecord` history is preserved.
+    private func resetOnboarding() {
+        clearCoachMemory()
+        if let plans = try? modelContext.fetch(FetchDescriptor<PlanRecord>()) {
+            for plan in plans { plan.isActive = false }
+        }
+        ActiveSessionStore(context: modelContext).discard()
+        try? modelContext.save()
+        settings.hasOnboarded = false
+    }
+
+    private func clearCoachMemory() {
+        guard let memories = try? modelContext.fetch(FetchDescriptor<MemoryRecord>()) else { return }
+        for memory in memories { modelContext.delete(memory) }
+        try? modelContext.save()
     }
 }
 
@@ -2181,6 +2347,7 @@ private struct DiagnosticsSettingsView: View {
 private struct PromptPreviewSettingsView: View {
     @Bindable var settings: AppSettings
     let fabric: FabricController
+    @Environment(\.modelContext) private var modelContext
 
     var body: some View {
         List {
@@ -2197,12 +2364,13 @@ private struct PromptPreviewSettingsView: View {
     }
 
     private var redactedPromptPreview: String {
-        """
+        let memoryDigest = MemoryStore(context: modelContext).digest()
+        return """
         System:
         \(String(settings.effectiveSystemPrompt.prefix(700)))
 
-        Goals:
-        \(settings.goalsContextSnippet.isEmpty ? "(empty)" : settings.goalsContextSnippet)
+        Memory:
+        \(memoryDigest.isEmpty ? "(empty)" : memoryDigest)
 
         Doctrine:
         \(settings.doctrineEnabled ? "Enabled" : "Disabled")

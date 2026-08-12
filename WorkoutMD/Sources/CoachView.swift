@@ -37,6 +37,8 @@ struct CoachView: View {
             return !(key ?? "").isEmpty
         case .ollama:
             return true
+        case .appleIntelligence:
+            return AppleIntelligenceCoachProvider().availability.isAvailable
         }
     }
 
@@ -129,7 +131,7 @@ struct CoachView: View {
             Text("Your coach isn't set up yet")
                 .font(.headline)
                 .foregroundStyle(.white)
-            Text("Add a provider key to get live, personalized guidance during your sets.")
+            Text(unconfiguredMessage)
                 .font(.subheadline)
                 .foregroundStyle(.white.opacity(0.6))
                 .multilineTextAlignment(.center)
@@ -200,6 +202,13 @@ struct CoachView: View {
         } catch {
             connectionError = error.localizedDescription
         }
+    }
+
+    private var unconfiguredMessage: String {
+        if settings.providerKind == .appleIntelligence {
+            return AppleIntelligenceCoachProvider().availability.message
+        }
+        return "Add a provider key to get live, personalized guidance during your sets."
     }
 
     // MARK: Transcript
@@ -274,6 +283,12 @@ struct CoachView: View {
     private var inputBar: some View {
         GlassEffectContainer(spacing: 10) {
             HStack(spacing: 10) {
+                // Inserts the edited transcript into the existing typed/dictated draft. Speech is
+                // never allowed to replace words already entered in the input bar.
+                MicButton(moodKey: moodKey) { text in
+                    draft = VoiceInputController.mergingRecognizedText(draft, with: text)
+                }
+
                 TextField("How did it feel?", text: $draft, axis: .vertical)
                     .textFieldStyle(.plain)
                     .foregroundStyle(.white)

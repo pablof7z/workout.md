@@ -26,6 +26,9 @@ targets:
             CFBundleURLSchemes:
               - workoutmd
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSMicrophoneUsageDescription: "Workout.md uses the microphone so you can dictate notes and talk to your coach."
+        NSBluetoothAlwaysUsageDescription: "Workout.md connects to your Tindeq to measure force during hangboard sets."
+        NSSpeechRecognitionUsageDescription: "Workout.md transcribes your speech on-device so you can dictate instead of type."
         UILaunchStoryboardName: LaunchScreen
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
@@ -140,9 +143,9 @@ targets:
     scheme:
       testTargets:
         - WorkoutMDTests
-  # `ThinkStripperTests` still compiles `ThinkStripper.swift` directly. OAuth contract tests use
-  # `@testable import WorkoutMD`, so this target also links the app target and runs its Rust-core
-  # prebuild (cached after the first build).
+  # `ThinkStripperTests` still compiles `ThinkStripper.swift` directly (a pure, Foundation-only
+  # helper, kept logic-only per-file). OAuth and plan tests use `@testable import WorkoutMD`, so
+  # this target links the app target and runs its cached Rust-core prebuild.
   WorkoutMDTests:
     type: bundle.unit-test
     platform: iOS
